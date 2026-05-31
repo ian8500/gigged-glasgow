@@ -1,0 +1,2 @@
+"""Pluggable event source adapters."""
+

@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+*.pyc
+*.sqlite3
+*.db
+.pytest_cache/
+backend/exports/
+
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo

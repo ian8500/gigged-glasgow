@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  background: #0e0e10;
+  --font-display: "Arial Black", Impact, "Arial Narrow", sans-serif;
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-editorial: Georgia, "Times New Roman", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    linear-gradient(90deg, rgba(255, 248, 232, 0.035) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 248, 232, 0.03) 1px, transparent 1px),
+    radial-gradient(circle at 12% 8%, rgba(214, 248, 76, 0.13), transparent 24rem),
+    radial-gradient(circle at 88% 12%, rgba(40, 184, 167, 0.11), transparent 22rem),
+    linear-gradient(135deg, #0e0e10 0%, #17151d 52%, #25232b 100%);
+  background-size:
+    36px 36px,
+    36px 36px,
+    auto,
+    auto,
+    auto;
+  color: #fff9ed;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: #d6f84c;
+  color: #0e0e10;
+}
+
+.poster-texture {
+  background-image:
+    linear-gradient(135deg, rgba(14, 14, 16, 0.12) 25%, transparent 25%),
+    linear-gradient(225deg, rgba(14, 14, 16, 0.12) 25%, transparent 25%);
+  background-size: 16px 16px;
+}

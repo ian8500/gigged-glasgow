@@ -1,0 +1,3 @@
+title,artist_name,venue_name,starts_at,ticket_url,image_url,price_min,price_max,currency,genre,source_event_id,source_attribution
+Friday Night at King Tut's,Sample Artist,King Tut's Wah Wah Hut,2026-06-05T19:30:00+00:00,https://example.com/tickets/friday-night,,12.50,15.00,GBP,indie,manual-king-tuts-2026-06-05,Manual CSV import
+Saturday at Stereo,Sample Electronic Act,Stereo,2026-06-06T20:00:00+00:00,https://example.com/tickets/saturday-stereo,,10.00,10.00,GBP,electronic,manual-stereo-2026-06-06,Manual CSV import

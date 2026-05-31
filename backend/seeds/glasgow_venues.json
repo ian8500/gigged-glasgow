@@ -1,0 +1,111 @@
+[
+  {
+    "name": "Barrowland Ballroom",
+    "slug": "barrowland-ballroom",
+    "address": "244 Gallowgate",
+    "postcode": "G4 0TT",
+    "capacity": 1900,
+    "website_url": "https://barrowland-ballroom.co.uk",
+    "instagram_handle": "@thebarrowlands"
+  },
+  {
+    "name": "King Tut's Wah Wah Hut",
+    "slug": "king-tuts-wah-wah-hut",
+    "address": "272A St Vincent Street",
+    "postcode": "G2 5RL",
+    "capacity": 300,
+    "website_url": "https://www.kingtuts.co.uk",
+    "instagram_handle": "@kingtuts"
+  },
+  {
+    "name": "Saint Luke's",
+    "slug": "st-lukes",
+    "address": "17 Bain Street",
+    "postcode": "G40 2JZ",
+    "capacity": 650,
+    "website_url": "https://www.stlukesglasgow.com",
+    "instagram_handle": "@stlukesglasgow"
+  },
+  {
+    "name": "SWG3",
+    "slug": "swg3",
+    "address": "100 Eastvale Place",
+    "postcode": "G3 8QG",
+    "capacity": 1250,
+    "website_url": "https://swg3.tv",
+    "instagram_handle": "@swg3glasgow"
+  },
+  {
+    "name": "The Hug and Pint",
+    "slug": "the-hug-and-pint",
+    "address": "171 Great Western Road",
+    "postcode": "G4 9AW",
+    "capacity": 100,
+    "website_url": "https://www.thehugandpint.com",
+    "instagram_handle": "@thehugandpint"
+  },
+  {
+    "name": "Stereo",
+    "slug": "stereo",
+    "address": "22 Renfield Lane",
+    "postcode": "G2 5AR",
+    "capacity": 300,
+    "website_url": "https://www.stereocafebar.com",
+    "instagram_handle": "@stereoglasgow"
+  },
+  {
+    "name": "Mono",
+    "slug": "mono",
+    "address": "12 Kings Court",
+    "postcode": "G1 5RB",
+    "capacity": 300,
+    "website_url": "https://www.monocafebar.com",
+    "instagram_handle": "@monoglasgow"
+  },
+  {
+    "name": "Nice N Sleazy",
+    "slug": "nice-n-sleazy",
+    "address": "421 Sauchiehall Street",
+    "postcode": "G2 3LG",
+    "capacity": 160,
+    "website_url": "https://www.nicensleazy.com",
+    "instagram_handle": "@nicensleazy"
+  },
+  {
+    "name": "The Garage",
+    "slug": "the-garage",
+    "address": "490 Sauchiehall Street",
+    "postcode": "G2 3LW",
+    "capacity": 700,
+    "website_url": "https://garageglasgow.co.uk",
+    "instagram_handle": "@garageglasgow"
+  },
+  {
+    "name": "OVO Hydro",
+    "slug": "ovo-hydro",
+    "address": "Exhibition Way",
+    "postcode": "G3 8YW",
+    "capacity": 14000,
+    "website_url": "https://www.ovohydro.com",
+    "instagram_handle": "@ovohydro"
+  },
+  {
+    "name": "Oran Mor",
+    "slug": "oran-mor",
+    "address": "Byres Road",
+    "postcode": "G12 8QX",
+    "capacity": 500,
+    "website_url": "https://oran-mor.co.uk",
+    "instagram_handle": "@oranmorglasgow"
+  },
+  {
+    "name": "Broadcast",
+    "slug": "broadcast",
+    "address": "427 Sauchiehall Street",
+    "postcode": "G2 3LG",
+    "capacity": 200,
+    "website_url": "https://broadcastglasgow.com",
+    "instagram_handle": "@broadcastglasgow"
+  }
+]
+
