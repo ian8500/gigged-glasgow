@@ -52,7 +52,7 @@
     "capacity": 14000,
     "website_url": "https://www.ovohydro.com",
     "event_listings_url": "https://www.ovohydro.com/events",
-    "ticketing_url": "https://www.ovohydro.com/events",
+    "ticketing_url": "https://www.ticketmaster.co.uk/ovo-hydro-tickets-glasgow/venue/254482",
     "instagram_handle": "@ovohydro",
     "source_discovered_from": "Glasgow venue coverage seed",
     "coverage_status": "manual_only",
@@ -120,7 +120,7 @@
     "notes": "East End venue with frequent live music."
   },
   {
-    "name": "Oran Mor",
+    "name": "Òran Mór",
     "slug": "oran-mor",
     "address": "Byres Road",
     "postcode": "G12 8QX",
@@ -163,21 +163,6 @@
     "coverage_status": "manual_only",
     "status": "active",
     "notes": "Secondary live room at The Garage; watch for duplicate listings."
-  },
-  {
-    "name": "The Attic",
-    "slug": "the-attic",
-    "address": "490 Sauchiehall Street",
-    "postcode": "G2 3LW",
-    "capacity": 150,
-    "website_url": "https://garageglasgow.co.uk",
-    "event_listings_url": "https://garageglasgow.co.uk/events/",
-    "ticketing_url": "https://garageglasgow.co.uk/events/",
-    "instagram_handle": "@garageglasgow",
-    "source_discovered_from": "Glasgow venue coverage seed",
-    "coverage_status": "manual_only",
-    "status": "active",
-    "notes": "Small live room at The Garage; watch for duplicate listings."
   },
   {
     "name": "Classic Grand",
@@ -405,8 +390,8 @@
     "notes": "Small city-centre venue."
   },
   {
-    "name": "The Cathouse",
-    "slug": "the-cathouse",
+    "name": "Cathouse",
+    "slug": "cathouse",
     "address": "15 Union Street",
     "postcode": "G1 3RB",
     "capacity": 800,

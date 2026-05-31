@@ -22,6 +22,26 @@ signals rather than permission to scrape. Live venue checks use lightweight
 robots-aware public page checks only; no browser automation, login flow,
 CAPTCHA bypass, anti-bot bypass, or paywalled source access is allowed.
 
+Instagram publishing is manual by default. The app exports PNGs, captions,
+hashtags, alt text, and scheduling JSON for human review. Do not add password
+login automation, private Instagram APIs, browser bots, likes, follows,
+comments, or DM automation. Any future direct publishing must use Meta's
+official Instagram Graph API and only after explicit approval.
+
+## Current Phase
+
+The MVP now has the backend pieces needed for an automated weekly gig discovery
+and Instagram content engine:
+
+- Ticketmaster Discovery API ingestion for Glasgow music events using the official API.
+- A `SourceAdapter` contract for future official API, RSS, partner export, or manually supplied sources.
+- Event normalisation, source attribution, source URLs, external IDs, confidence scoring, dedupe fingerprints, and ingestion logs.
+- A Glasgow venue coverage dashboard with source health, stale checks, broken sources, manual-only venues, and weekly pre-publish safety reporting.
+- A `Weekly Run` workflow that runs ingestion, venue coverage, dedupe, event scoring, candidate selection, and review-queue generation.
+- Instagram review drafts for Weekly Top 10, Weekend Picks, Cheap Gigs Under £15, and Hidden Gem.
+- Exportable `1080x1080` square PNGs, `1080x1350` carousel PNGs, captions, hashtags, alt text, and scheduling JSON.
+- Manual fallback remains intact: manual event entry and CSV import are still supported.
+
 ## Project Structure
 
 ```text
@@ -165,6 +185,18 @@ uvicorn app.main:app --reload
 
 The API will be available at `http://localhost:8000/api/v1`.
 
+Set API keys in `backend/.env`:
+
+```dotenv
+ADMIN_API_KEY=change-me-in-production
+TICKETMASTER_API_KEY=your-ticketmaster-discovery-api-key
+MANUAL_EVENTS_CSV_PATH=seeds/manual_events.csv
+```
+
+`TICKETMASTER_API_KEY` is optional for local smoke tests, but Ticketmaster
+ingestion will be skipped until it is set. Get a key from Ticketmaster
+Developer and use the official Discovery API product.
+
 Useful endpoints:
 
 - `GET /api/v1/health`
@@ -178,6 +210,18 @@ Useful endpoints:
 - `POST /api/v1/admin/venue-coverage/seed/glasgow` with `X-Admin-Token`
 - `POST /api/v1/admin/venue-coverage/check-all?city=glasgow` with `X-Admin-Token`
 - `POST /api/v1/admin/venues/{venue_id}/check-now` with `X-Admin-Token`
+- `POST /api/v1/admin/ingest/ticketmaster?city=glasgow` with `X-Admin-Token`
+- `GET /api/v1/admin/ingest/logs?city=glasgow` with `X-Admin-Token`
+- `GET /api/v1/admin/weekly-run?city=glasgow` with `X-Admin-Token`
+- `POST /api/v1/admin/weekly-run/run?city=glasgow` with `X-Admin-Token`
+- `GET /api/v1/admin/social/review-queue?city=glasgow&status=needs_review` with `X-Admin-Token`
+- `GET /api/v1/admin/social/calendar?city=glasgow` with `X-Admin-Token`
+- `GET /api/v1/admin/social/media-library?city=glasgow` with `X-Admin-Token`
+- `POST /api/v1/admin/social/{post_id}/export` with `X-Admin-Token`
+- `POST /api/v1/admin/social/{post_id}/posted-manually` with `X-Admin-Token`
+- `GET /api/v1/admin/social/{post_id}/copy/caption` with `X-Admin-Token`
+- `GET /api/v1/admin/social/{post_id}/copy/hashtags` with `X-Admin-Token`
+- `GET /api/v1/admin/social/{post_id}/copy/alt-text` with `X-Admin-Token`
 
 Ingestion commands:
 
@@ -186,6 +230,7 @@ python manage.py ingest --city glasgow
 python manage.py dedupe --city glasgow
 python manage.py generate-weekly --city glasgow
 python manage.py generate-social --city glasgow
+python manage.py weekly-run --city glasgow
 ```
 
 `ingest` runs all registered source adapters. Ticketmaster uses the official
@@ -194,6 +239,11 @@ Discovery API when `TICKETMASTER_API_KEY` is configured. Manual CSV import reads
 running from `backend`. Bandsintown, Songkick, and public venue pages are
 explicit placeholders until official credentials, robots.txt, and terms checks
 are completed.
+
+`weekly-run` is the preferred weekly operator command. It runs all enabled
+source adapters, updates venue coverage, deduplicates events, scores the next
+seven days of events, selects recommended candidates, generates Instagram review
+drafts, and exports local assets. It never publishes automatically.
 
 Ticketmaster adapter reference: https://developer.ticketmaster.com/products-and-docs/apis/discovery-api/v2/
 
@@ -215,17 +265,31 @@ exports, and manual review.
 Social generation:
 
 - `POST /api/v1/admin/social/generate?city=glasgow` creates review drafts for all supported Instagram formats.
-- `GET /api/v1/admin/social/review-queue?city=glasgow&status=review` lists posts awaiting review.
+- `GET /api/v1/admin/social/review-queue?city=glasgow&status=needs_review` lists posts awaiting review.
 - `PATCH /api/v1/admin/social/{post_id}` edits title, description, caption, hashtags, or status.
 - `POST /api/v1/admin/social/{post_id}/approve` marks a draft approved.
 - `POST /api/v1/admin/social/{post_id}/reject` marks a draft rejected.
 - `POST /api/v1/admin/social/{post_id}/regenerate` rebuilds a draft from approved events.
+- `POST /api/v1/admin/social/{post_id}/export` regenerates local PNG and JSON export assets and marks the post `exported`.
+- `POST /api/v1/admin/social/{post_id}/posted-manually` marks the post as posted by a human operator.
+- `GET /api/v1/admin/social/calendar?city=glasgow` returns planned posts for the next week.
+- `GET /api/v1/admin/social/media-library?city=glasgow` returns generated graphics and metadata.
+- Copy helpers return UI-ready strings for `Copy caption`, `Copy hashtags`, and `Copy alt text` buttons.
 
-Supported post formats are Weekly Top 10 Glasgow Gigs, Tonight in Glasgow,
-Weekend Picks, Cheap Gigs Under £15, New Artist Spotlight, and Venue Spotlight.
-Generation writes PNG and scheduling JSON exports to `backend/exports/social/`.
-Those exports are local artifacts and are intentionally gitignored. Nothing is
-published automatically.
+Supported post formats are Weekly Top 10 Glasgow Gigs, Weekend Picks, Cheap
+Gigs Under £15, Hidden Gem, Tonight in Glasgow, New Artist Spotlight, and Venue
+Spotlight. Generation writes square PNGs, carousel PNGs, and scheduling JSON
+exports to `backend/exports/social/`. Those exports are local artifacts and are
+intentionally gitignored. Nothing is published automatically.
+
+Social post statuses are:
+
+- `draft`
+- `needs_review`
+- `approved`
+- `exported`
+- `posted_manually`
+- `rejected`
 
 Instagram publishing preparation:
 
@@ -283,6 +347,26 @@ npm run dev
 
 The dashboard will be available at `http://localhost:3000`.
 
+Frontend environment:
+
+```dotenv
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
+ADMIN_API_KEY=change-me-in-production
+```
+
+Run backend and frontend together in separate terminals:
+
+```bash
+# Terminal 1
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload
+
+# Terminal 2
+cd frontend
+npm run dev
+```
+
 ## File Guide
 
 ### Root
@@ -309,7 +393,7 @@ The dashboard will be available at `http://localhost:3000`.
 - `backend/app/api/routes/venues.py` lists seeded or managed venues by city.
 - `backend/app/api/routes/events.py` lists upcoming events by city.
 - `backend/app/api/routes/admin.py` exposes protected dashboard, seed, venue creation, and event creation endpoints.
-- `backend/app/api/routes/admin.py` also exposes event moderation, duplicate merge, CSV import, weekly generation, and social review endpoints.
+- `backend/app/api/routes/admin.py` also exposes event moderation, duplicate merge, CSV import, ingestion logs, Weekly Run, social review, export, copy, calendar, and media-library endpoints.
 - `backend/app/cities/base.py` defines the reusable city brand template schema.
 - `backend/app/cities/glasgow.py` contains the first live brand template: Gigged Glasgow.
 - `backend/app/cities/examples.py` contains example templates for Gigged Edinburgh, Gigged Manchester, and Gigged Liverpool.
@@ -318,11 +402,13 @@ The dashboard will be available at `http://localhost:3000`.
 - `backend/app/models/city_brand.py` stores per-city brand metadata such as handle, tagline, colours, hashtags, voice notes, and posting schedule.
 - `backend/app/models/venue.py` defines venue records, whitelisting, coverage status, event listing URLs, ticketing URLs, contact URLs, location fields, and capacity.
 - `backend/app/models/venue_check_log.py` stores individual venue audit results and confidence scores.
+- `backend/app/models/venue_coverage.py` stores current source-level venue coverage health.
 - `backend/app/models/artist.py` defines artists that can be linked to events.
 - `backend/app/models/source.py` defines source metadata for APIs, feeds, venue pages, and manual entry.
+- `backend/app/models/ingestion_log.py` stores per-source ingestion run counts, failures, and warnings.
 - `backend/app/models/event.py` defines normalised event records, ticket metadata, confidence, source attribution, and review status.
 - `backend/app/models/weekly_issue.py` defines weekly editorial issues covering a Friday-to-Thursday window.
-- `backend/app/models/social_post.py` defines Instagram publishing drafts linked to events or weekly issues.
+- `backend/app/models/social_post.py` defines Instagram publishing drafts linked to events or weekly issues, including planned/exported/manual-post timestamps.
 - `backend/app/schemas/city.py` defines API output shape for cities.
 - `backend/app/schemas/venue.py` defines API input and output shape for venues.
 - `backend/app/schemas/event.py` defines API input and output shape for events.
@@ -330,14 +416,15 @@ The dashboard will be available at `http://localhost:3000`.
 - `backend/app/services/seed.py` idempotently creates the Glasgow city, manual source, and seeded venues.
 - `backend/app/services/city_brands.py` creates city brands from templates and syncs brand metadata and starter venues.
 - `backend/app/services/normalization.py` builds event slugs, dedupe fingerprints, confidence scores, and review flags.
-- `backend/app/services/ingestion.py` runs source adapters and upserts normalised events into the shared `Event` model.
-- `backend/app/services/deduplication.py` merges duplicates using artist name, venue, event date, and city.
+- `backend/app/services/ingestion.py` runs enabled source adapters, logs source runs, deduplicates source IDs/fingerprints during ingest, and upserts normalised events into the shared `Event` model.
+- `backend/app/services/deduplication.py` merges duplicates using event title, venue, event date, and city.
 - `backend/app/services/weekly.py` creates Friday-to-Thursday weekly issues and draft Instagram roundup posts.
+- `backend/app/services/weekly_run.py` orchestrates the automated weekly workflow: ingest, venue coverage, dedupe, scoring, candidate selection, review posts, and exports.
 - `backend/app/services/social_generation.py` generates Instagram drafts, captions, hashtags, alt text, PNG exports, scheduling JSON, and review-queue payloads.
 - `backend/app/services/meta_publishing.py` checks Meta Graph API readiness and prepares placeholder payloads without publishing.
 - `backend/app/services/venue_coverage.py` seeds the expanded Glasgow venue database, audits coverage, checks individual venues, scores completeness, and builds weekly preflight reports.
 - `backend/app/sources/base.py` defines the source adapter protocol and normalised source event shape.
-- `backend/app/sources/ticketmaster.py` fetches music events through Ticketmaster Discovery API using `apikey`, city coordinates, radius, and date range.
+- `backend/app/sources/ticketmaster.py` fetches Glasgow music events through Ticketmaster Discovery API using `apikey`, `city=Glasgow`, `countryCode=GB`, `classificationName=music`, and a 30-day date range.
 - `backend/app/sources/manual_csv.py` imports legally provided manual event data from CSV.
 - `backend/app/sources/bandsintown.py` is a placeholder for a future official Bandsintown integration.
 - `backend/app/sources/songkick.py` is a placeholder for a future official Songkick integration.
@@ -346,7 +433,7 @@ The dashboard will be available at `http://localhost:3000`.
 - `backend/seeds/glasgow_venues.json` contains the initial Glasgow venue whitelist.
 - `backend/seeds/glasgow_venue_coverage.json` contains the expanded Glasgow venue coverage seed list.
 - `backend/seeds/manual_events.csv` provides sample manual event input for local ingestion testing.
-- `backend/tests/test_ingestion_helpers.py` covers fingerprint creation and the Friday-to-Thursday weekly window.
+- `backend/tests/test_ingestion_helpers.py` covers fingerprint creation, Ticketmaster query parameters, venue coverage seed integrity, pre-publish safety, and the Friday-to-Thursday weekly window.
 
 ### Frontend
 

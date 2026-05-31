@@ -7,7 +7,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.core.settings import settings
 from app.db.session import Base
-from app.models import artist, city, city_brand, event, source, social_post, venue, venue_check_log, weekly_issue  # noqa: F401
+from app.models import artist, city, city_brand, event, ingestion_log, source, social_post, venue, venue_check_log, venue_coverage, weekly_issue  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

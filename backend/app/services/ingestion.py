@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from slugify import slugify
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.artist import Artist
 from app.models.city import City
 from app.models.event import Event
+from app.models.ingestion_log import IngestionLog
 from app.models.source import Source
 from app.models.venue import Venue
 from app.services.normalization import (
@@ -31,7 +33,12 @@ class IngestionReport:
     created: int = 0
     updated: int = 0
     skipped: int = 0
+    failures: int = 0
     warnings: list[str] = field(default_factory=list)
+    source_logs: list[dict] = field(default_factory=list)
+
+
+UpsertOutcome = Literal["created", "updated", "skipped"]
 
 
 def ingest_city(
@@ -48,23 +55,83 @@ def ingest_city(
         raise ValueError(f"City '{city_slug}' has not been seeded.")
 
     start = datetime.now(timezone.utc)
-    end = start + timedelta(days=config.minimum_date_range_days)
+    end = start + timedelta(days=30)
     report = IngestionReport(city=city_slug)
 
     for adapter in adapters or get_default_adapters():
         source = ensure_source(db, adapter.name, adapter.kind)
-        result = adapter.fetch(config, start, end)
+        log = IngestionLog(
+            city_id=city.id,
+            source_id=source.id,
+            source_name=adapter.name,
+            city_slug=city_slug,
+            events_found=0,
+            events_created=0,
+            events_updated=0,
+            duplicates_skipped=0,
+            failures=0,
+            warnings=[],
+            started_at=datetime.utcnow(),
+        )
+        db.add(log)
+        db.flush()
+        if not source.is_enabled:
+            warning = f"{adapter.name} source is disabled; ingestion skipped."
+            log.warnings = [warning]
+            log.finished_at = datetime.utcnow()
+            report.warnings.append(warning)
+            report.source_logs.append(ingestion_log_payload(log))
+            continue
+
+        try:
+            result = adapter.fetch(config, start, end)
+        except Exception as exc:  # pragma: no cover - defensive guard around external adapters
+            result = None
+            log.failures = 1
+            log.warnings = [f"{adapter.name} failed: {exc}"]
+            report.failures += 1
+            report.warnings.extend(log.warnings)
+            log.finished_at = datetime.utcnow()
+            continue
+
+        seen_source_ids: set[str] = set()
+        seen_fingerprints: set[str] = set()
         report.warnings.extend(result.warnings)
+        report.warnings.extend(result.failures)
         report.fetched += len(result.events)
+        report.failures += len(result.failures)
+        log.events_found = len(result.events)
+        log.failures = len(result.failures)
+        log.warnings = result.warnings + result.failures
 
         for source_event in result.events:
-            created = upsert_event(db, city, config.venue_whitelist, source, source_event)
-            if created is None:
+            source_event.starts_at = ensure_aware(source_event.starts_at)
+            fingerprint = event_fingerprint(city.slug, source_event)
+            if source_event.source_event_id and source_event.source_event_id in seen_source_ids:
                 report.skipped += 1
-            elif created:
+                log.duplicates_skipped += 1
+                continue
+            if fingerprint in seen_fingerprints:
+                report.skipped += 1
+                log.duplicates_skipped += 1
+                continue
+            if source_event.source_event_id:
+                seen_source_ids.add(source_event.source_event_id)
+            seen_fingerprints.add(fingerprint)
+
+            outcome = upsert_event(db, city, config.venue_whitelist, source, source_event)
+            if outcome == "skipped":
+                report.skipped += 1
+                log.duplicates_skipped += 1
+            elif outcome == "created":
                 report.created += 1
+                log.events_created += 1
             else:
                 report.updated += 1
+                log.events_updated += 1
+
+        log.finished_at = datetime.utcnow()
+        report.source_logs.append(ingestion_log_payload(log))
 
     db.commit()
     return report
@@ -76,19 +143,31 @@ def upsert_event(
     venue_whitelist: list[str],
     source: Source,
     source_event: NormalizedSourceEvent,
-) -> bool | None:
+) -> UpsertOutcome:
     source_event.starts_at = ensure_aware(source_event.starts_at)
+    fingerprint = event_fingerprint(city.slug, source_event)
+    event = None
+    if source_event.source_event_id:
+        event = db.scalar(
+            select(Event).where(
+                Event.city_id == city.id,
+                Event.source_id == source.id,
+                Event.source_event_id == source_event.source_event_id,
+            )
+        )
+
+    fingerprint_match = db.scalar(
+        select(Event).where(Event.city_id == city.id, Event.normalized_fingerprint == fingerprint)
+    )
+    if event is not None and fingerprint_match is not None and event.id != fingerprint_match.id:
+        return "skipped"
+    if event is None:
+        event = fingerprint_match
+
     venue = find_or_create_venue(db, city, venue_whitelist, source_event.venue_name)
     artist = find_or_create_artist(db, source_event.artist_name or source_event.title)
-    fingerprint = event_fingerprint(city.slug, source_event)
     score = confidence_score(source_event, venue.is_whitelisted)
 
-    event = db.scalar(
-        select(Event).where(
-            Event.city_id == city.id,
-            Event.normalized_fingerprint == fingerprint,
-        )
-    )
     created = event is None
     if event is None:
         event = Event(
@@ -108,6 +187,7 @@ def upsert_event(
     event.starts_at = source_event.starts_at
     event.ends_at = source_event.ends_at
     event.ticket_url = source_event.ticket_url
+    event.source_url = source_event.source_url or source_event.ticket_url
     event.image_url = source_event.image_url
     event.price_min = source_event.price_min
     event.price_max = source_event.price_max
@@ -119,7 +199,7 @@ def upsert_event(
     event.source_attribution = source_event.source_attribution
     event.needs_review = needs_review(event.confidence_score, venue.is_whitelisted)
     event.raw_payload = source_event.raw_payload
-    return created
+    return "created" if created else "updated"
 
 
 def ensure_source(db: Session, name: str, kind: str) -> Source:
@@ -166,3 +246,19 @@ def get_city_config(city_slug: str):
     from app.cities.registry import get_city_config as registry_get_city_config
 
     return registry_get_city_config(city_slug)
+
+
+def ingestion_log_payload(log: IngestionLog) -> dict:
+    return {
+        "id": log.id,
+        "source_name": log.source_name,
+        "city_slug": log.city_slug,
+        "events_found": log.events_found,
+        "events_created": log.events_created,
+        "events_updated": log.events_updated,
+        "duplicates_skipped": log.duplicates_skipped,
+        "failures": log.failures,
+        "warnings": log.warnings or [],
+        "started_at": log.started_at.isoformat() if log.started_at else None,
+        "finished_at": log.finished_at.isoformat() if log.finished_at else None,
+    }

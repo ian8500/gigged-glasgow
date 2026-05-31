@@ -7,7 +7,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.cities.glasgow import GLASGOW_CONFIG
-from app.models.city import City
 from app.models.source import Source
 from app.models.venue import Venue
 from app.services.city_brands import upsert_city_config

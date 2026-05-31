@@ -35,6 +35,7 @@ class Event(Base):
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ticket_url: Mapped[str | None] = mapped_column(String(600))
+    source_url: Mapped[str | None] = mapped_column(String(600))
     image_url: Mapped[str | None] = mapped_column(String(600))
     price_min: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     price_max: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
@@ -60,4 +61,3 @@ class Event(Base):
     artist = relationship("Artist", back_populates="events")
     source = relationship("Source", back_populates="events")
     social_posts = relationship("SocialPost", back_populates="event")
-

@@ -38,3 +38,8 @@ class Venue(Base):
     city = relationship("City", back_populates="venues")
     events = relationship("Event", back_populates="venue")
     check_logs = relationship("VenueCheckLog", back_populates="venue", cascade="all, delete-orphan")
+    coverage_sources = relationship(
+        "VenueCoverage",
+        back_populates="venue",
+        cascade="all, delete-orphan",
+    )

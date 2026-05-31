@@ -4,12 +4,13 @@ import argparse
 
 from app.db.schema import create_or_update_local_schema
 from app.db.session import engine, SessionLocal
-from app.models import artist, city, city_brand, event, source, social_post, venue, venue_check_log, weekly_issue  # noqa: F401
+from app.models import artist, city, city_brand, event, ingestion_log, source, social_post, venue, venue_check_log, venue_coverage, weekly_issue  # noqa: F401
 from app.services.deduplication import dedupe_city
 from app.services.ingestion import ingest_city
 from app.services.seed import seed_glasgow
 from app.services.social_generation import generate_social_posts
 from app.services.weekly import generate_weekly_issue
+from app.services.weekly_run import run_weekly_issue_workflow
 
 
 def init_db() -> None:
@@ -65,6 +66,17 @@ def generate_social(city_slug: str) -> None:
     )
 
 
+def weekly_run(city_slug: str) -> None:
+    init_db()
+    with SessionLocal() as db:
+        report = run_weekly_issue_workflow(db, city_slug)
+    print(
+        f"Weekly Run {report.issue_slug}: candidates={len(report.candidates)}, "
+        f"posts_created={len(report.posts_created)}, review_queue={report.review_queue_count}, "
+        "auto_publish=False"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gigged Glasgow backend management commands")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -78,6 +90,8 @@ def main() -> None:
     weekly_parser.add_argument("--city", default="glasgow", help="City slug to generate")
     social_parser = subparsers.add_parser("generate-social", help="Create Instagram drafts for review")
     social_parser.add_argument("--city", default="glasgow", help="City slug to generate")
+    weekly_run_parser = subparsers.add_parser("weekly-run", help="Run the automated weekly issue workflow")
+    weekly_run_parser.add_argument("--city", default="glasgow", help="City slug to generate")
 
     args = parser.parse_args()
     if args.command == "init-db":
@@ -92,6 +106,8 @@ def main() -> None:
         generate_weekly(args.city)
     if args.command == "generate-social":
         generate_social(args.city)
+    if args.command == "weekly-run":
+        weekly_run(args.city)
 
 
 if __name__ == "__main__":

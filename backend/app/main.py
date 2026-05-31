@@ -7,7 +7,7 @@ from app.api.router import api_router
 from app.core.settings import settings
 from app.db.schema import create_or_update_local_schema
 from app.db.session import engine
-from app.models import artist, city, city_brand, event, source, social_post, venue, venue_check_log, weekly_issue  # noqa: F401
+from app.models import artist, city, city_brand, event, ingestion_log, source, social_post, venue, venue_check_log, venue_coverage, weekly_issue  # noqa: F401
 
 
 def create_app() -> FastAPI:

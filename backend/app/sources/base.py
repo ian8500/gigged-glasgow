@@ -16,6 +16,7 @@ class NormalizedSourceEvent:
     artist_name: str | None = None
     ends_at: datetime | None = None
     ticket_url: str | None = None
+    source_url: str | None = None
     image_url: str | None = None
     price_min: Decimal | None = None
     price_max: Decimal | None = None
@@ -35,12 +36,15 @@ class SourceFetchResult:
     source_name: str
     events: list[NormalizedSourceEvent] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    failures: list[str] = field(default_factory=list)
 
 
-class EventSourceAdapter(Protocol):
+class SourceAdapter(Protocol):
     name: str
     kind: str
 
     def fetch(self, city: CityConfig, start: datetime, end: datetime) -> SourceFetchResult:
         """Fetch and normalise source-specific events into the shared source event shape."""
 
+
+EventSourceAdapter = SourceAdapter

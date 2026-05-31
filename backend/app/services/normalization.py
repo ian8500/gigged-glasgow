@@ -9,16 +9,27 @@ from app.sources.base import NormalizedSourceEvent
 
 
 def event_fingerprint(city_slug: str, event: NormalizedSourceEvent | object) -> str:
-    artist = getattr(event, "artist_name", None) or getattr(event, "title")
+    title = getattr(event, "title")
     venue = getattr(event, "venue_name", None) or _related_name(getattr(event, "venue", None)) or "venue-tbc"
     starts_at = getattr(event, "starts_at")
-    return fingerprint_parts(city_slug=city_slug, artist_name=artist, venue_name=venue, starts_at=starts_at)
+    return fingerprint_parts(city_slug=city_slug, title=title, venue_name=venue, starts_at=starts_at)
 
 
-def fingerprint_parts(city_slug: str, artist_name: str, venue_name: str, starts_at: datetime) -> str:
+def fingerprint_parts(
+    city_slug: str,
+    title: str | None = None,
+    venue_name: str | None = None,
+    starts_at: datetime | None = None,
+    artist_name: str | None = None,
+) -> str:
+    if starts_at is None or venue_name is None:
+        raise ValueError("venue_name and starts_at are required for event fingerprints")
+    title = title or artist_name
+    if title is None:
+        raise ValueError("title is required for event fingerprints")
     starts_at = ensure_aware(starts_at)
     date_key = starts_at.date().isoformat()
-    return slugify(f"{city_slug} {clean_name(artist_name)} {clean_name(venue_name)} {date_key}")
+    return slugify(f"{city_slug} {clean_name(title)} {clean_name(venue_name)} {date_key}")
 
 
 def clean_name(value: str) -> str:

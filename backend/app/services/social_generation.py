@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import textwrap
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -11,7 +11,6 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.models import artist, city, city_brand, event, source, social_post, venue, venue_check_log, weekly_issue  # noqa: F401
 from app.models.city import City
 from app.models.event import Event
 from app.models.social_post import SocialPost
@@ -22,6 +21,7 @@ PostFormat = Literal[
     "tonight",
     "weekend_picks",
     "under_15",
+    "hidden_gem",
     "new_artist_spotlight",
     "venue_spotlight",
 ]
@@ -58,6 +58,7 @@ def generate_social_posts(db: Session, city_slug: str, formats: list[PostFormat]
         "tonight",
         "weekend_picks",
         "under_15",
+        "hidden_gem",
         "new_artist_spotlight",
         "venue_spotlight",
     ]
@@ -118,14 +119,26 @@ def build_generated_post(post_format: PostFormat, events: list[Event], city_name
             selected = events[:3]
         title = "Cheap Gigs Under £15"
         description = "Low-cost Glasgow gigs that still feel worth the night out."
+    elif post_format == "hidden_gem":
+        selected = sorted(
+            events,
+            key=lambda event: (
+                bool(event.venue and event.venue.capacity and event.venue.capacity <= 300),
+                bool(event.price_min is not None and float(event.price_min) <= 15),
+                event.confidence_score or 0,
+            ),
+            reverse=True,
+        )[:1]
+        title = "Hidden Gem"
+        description = "A smaller-room pick with enough signal to deserve attention."
     elif post_format == "new_artist_spotlight":
         selected = events[:1]
         title = "New Artist Spotlight"
-        description = f"One artist to check before they hit bigger rooms."
+        description = "One artist to check before they hit bigger rooms."
     else:
         selected = events[:1]
         title = "Venue Spotlight"
-        description = f"A trusted Glasgow room with a gig worth knowing."
+        description = "A trusted Glasgow room with a gig worth knowing."
 
     return GeneratedPost(
         format=post_format,
@@ -139,26 +152,36 @@ def build_generated_post(post_format: PostFormat, events: list[Event], city_name
     )
 
 
-def create_review_post(db: Session, city: City, generated: GeneratedPost) -> SocialPost:
+def create_review_post(
+    db: Session,
+    city: City,
+    generated: GeneratedPost,
+    weekly_issue_id: int | None = None,
+) -> SocialPost:
     first_event = generated.events[0] if generated.events else None
     post = SocialPost(
         city_id=city.id,
+        weekly_issue_id=weekly_issue_id,
         event_id=first_event.id if first_event and generated.format != "weekly_top_10" else None,
         platform="instagram",
         template_name=generated.format,
         caption=generated.caption,
         image_prompt=generated.description,
-        status="review",
+        status="needs_review",
+        planned_for=planned_publish_time(generated.format),
         preview_payload={},
     )
     db.add(post)
     db.flush()
 
     payload = build_preview_payload(post.id, generated)
-    png_paths = export_pngs(payload)
+    square_path = export_square_png(payload)
+    png_paths = export_carousel_pngs(payload)
     payload["exports"] = {
+        "square_png_path": str(square_path),
         "png_path": str(png_paths[0]),
         "png_paths": [str(path) for path in png_paths],
+        "carousel_png_paths": [str(path) for path in png_paths],
     }
     json_path = export_scheduling_json(post.id, payload)
     payload["exports"]["json_path"] = str(json_path)
@@ -176,17 +199,21 @@ def regenerate_post(db: Session, post: SocialPost) -> SocialPost:
         raise ValueError("No approved events available to regenerate this post.")
 
     payload = build_preview_payload(post.id, generated)
-    png_paths = export_pngs(payload)
+    square_path = export_square_png(payload)
+    png_paths = export_carousel_pngs(payload)
     payload["exports"] = {
+        "square_png_path": str(square_path),
         "png_path": str(png_paths[0]),
         "png_paths": [str(path) for path in png_paths],
+        "carousel_png_paths": [str(path) for path in png_paths],
     }
     json_path = export_scheduling_json(post.id, payload)
     payload["exports"]["json_path"] = str(json_path)
     post.caption = generated.caption
     post.image_prompt = generated.description
     post.preview_payload = payload
-    post.status = "review"
+    post.planned_for = planned_publish_time(generated.format)
+    post.status = "needs_review"
     db.commit()
     db.refresh(post)
     return post
@@ -200,6 +227,7 @@ def normalize_post_format(value: str) -> PostFormat:
         "under_15",
         "new_artist_spotlight",
         "venue_spotlight",
+        "hidden_gem",
     }
     return value if value in valid else "weekly_top_10"  # type: ignore[return-value]
 
@@ -216,7 +244,7 @@ def build_preview_payload(post_id: int, generated: GeneratedPost) -> dict:
         "caption": generated.caption,
         "hashtags": generated.hashtags,
         "alt_text": generated.alt_text,
-        "status": "review",
+        "status": "needs_review",
         "publishing": {"auto_publish": False},
         "events": event_payload,
         "carousel_slides": build_carousel_slides(generated, event_payload),
@@ -232,7 +260,7 @@ def build_preview_payload(post_id: int, generated: GeneratedPost) -> dict:
 
 
 def build_carousel_slides(generated: GeneratedPost, event_payload: list[dict]) -> list[dict]:
-    if generated.format != "weekly_top_10":
+    if generated.format not in {"weekly_top_10", "weekend_picks"}:
         return [
             {
                 "slide": 1,
@@ -242,6 +270,27 @@ def build_carousel_slides(generated: GeneratedPost, event_payload: list[dict]) -
                 "events": event_payload,
             }
         ]
+
+    if generated.format == "weekend_picks":
+        slides = [
+            {
+                "slide": 1,
+                "kind": "cover",
+                "title": "Weekend Picks",
+                "description": "Friday-to-Sunday gigs worth saving.",
+            }
+        ]
+        for index, event in enumerate(event_payload, start=2):
+            slides.append(
+                {
+                    "slide": index,
+                    "kind": "event",
+                    "title": event["artist"],
+                    "description": event["short_description"],
+                    "event": event,
+                }
+            )
+        return slides
 
     slides = [
         {
@@ -293,6 +342,8 @@ def generate_hashtags(post_format: PostFormat, events: list[Event], city_name: s
     tags = ["#GiggedGlasgow", "#GlasgowGigs", "#GlasgowMusic", "#LiveMusic"]
     if post_format == "under_15":
         tags.extend(["#CheapGigs", "#Under15"])
+    if post_format == "hidden_gem":
+        tags.extend(["#HiddenGem", "#IndependentVenue"])
     if post_format == "tonight":
         tags.append("#TonightInGlasgow")
     if post_format == "venue_spotlight" and events and events[0].venue:
@@ -311,7 +362,7 @@ def generate_alt_text(title: str, events: list[Event]) -> str:
     return f"Instagram graphic for Gigged Glasgow titled {title}, listing: {'; '.join(event_bits)}."
 
 
-def export_pngs(payload: dict) -> list[Path]:
+def export_carousel_pngs(payload: dict) -> list[Path]:
     slides = payload.get("carousel_slides") or [
         {
             "slide": 1,
@@ -320,35 +371,60 @@ def export_pngs(payload: dict) -> list[Path]:
             "events": payload["events"],
         }
     ]
-    return [export_png(payload, slide) for slide in slides]
+    return [export_png(payload, slide, width=1080, height=1350, suffix=f"slide-{slide['slide']}") for slide in slides]
 
 
-def export_png(payload: dict, slide: dict) -> Path:
+def export_pngs(payload: dict) -> list[Path]:
+    return export_carousel_pngs(payload)
+
+
+def export_square_png(payload: dict) -> Path:
+    slide = {
+        "slide": "square",
+        "title": payload["title"],
+        "description": payload["description"],
+        "events": payload["events"],
+    }
+    return export_png(payload, slide, width=1080, height=1080, suffix="square")
+
+
+def export_png(
+    payload: dict,
+    slide: dict,
+    width: int = 1080,
+    height: int = 1350,
+    suffix: str | None = None,
+) -> Path:
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    path = EXPORT_DIR / f"post-{payload['post_id']}-{payload['format']}-slide-{slide['slide']}.png"
-    image = Image.new("RGB", (1080, 1350), "#f3efe4")
+    suffix = suffix or f"slide-{slide['slide']}"
+    path = EXPORT_DIR / f"post-{payload['post_id']}-{payload['format']}-{suffix}.png"
+    image = Image.new("RGB", (width, height), "#f3efe4")
     draw = ImageDraw.Draw(image)
-    title_font = safe_font(82)
-    body_font = safe_font(34)
+    title_font = safe_font(72 if height == 1080 else 82)
+    body_font = safe_font(30 if height == 1080 else 34)
     small_font = safe_font(24)
 
-    draw.rectangle((48, 48, 1032, 1302), outline="#0e0e10", width=12)
+    draw.rectangle((48, 48, width - 48, height - 48), outline="#0e0e10", width=12)
     draw.rectangle((74, 74, 370, 128), fill="#d6f84c")
     draw.text((92, 88), "GIGGED GLASGOW", fill="#0e0e10", font=small_font)
     draw.text((86, 190), wrap_text(slide["title"], 18), fill="#0e0e10", font=title_font, spacing=6)
-    draw.text((86, 510), wrap_text(slide["description"], 40), fill="#393642", font=body_font, spacing=8)
+    description_y = 450 if height == 1080 else 510
+    draw.text((86, description_y), wrap_text(slide["description"], 40), fill="#393642", font=body_font, spacing=8)
 
-    y = 700
+    y = 600 if height == 1080 else 700
     slide_events = [slide["event"]] if slide.get("event") else slide.get("events", payload["events"])[:5]
     for event in slide_events:
-        draw.line((86, y - 22, 994, y - 22), fill="#0e0e10", width=5)
+        if y > height - 230:
+            break
+        draw.line((86, y - 22, width - 86, y - 22), fill="#0e0e10", width=5)
         line = f"{event['date']} · {event['artist']} · {event['venue']} · {event['ticket_price']}"
         draw.text((86, y), wrap_text(line, 42), fill="#0e0e10", font=body_font, spacing=4)
-        y += 116
+        y += 106 if height == 1080 else 116
 
-    draw.rectangle((730, 1168, 994, 1238), fill="#ef4d2f")
-    draw.text((754, 1188), "REVIEW DRAFT", fill="#fff8e8", font=small_font)
-    draw.text((86, 1210), "@giggedglasgow", fill="#0e0e10", font=small_font)
+    badge_y = height - 182
+    draw.rectangle((width - 350, badge_y, width - 86, badge_y + 70), fill="#ef4d2f")
+    draw.text((width - 326, badge_y + 20), "REVIEW DRAFT", fill="#fff8e8", font=small_font)
+    draw.text((86, height - 140), "@giggedglasgow", fill="#0e0e10", font=small_font)
     image.save(path)
     return path
 
@@ -359,14 +435,18 @@ def export_scheduling_json(post_id: int, payload: dict) -> Path:
     schedule_payload = {
         "id": post_id,
         "platform": "instagram",
-        "status": "review",
+        "status": payload.get("status", "needs_review"),
         "auto_publish": False,
         "publishing_mode": "manual_export",
         "caption": payload["caption"],
         "hashtags": payload["hashtags"],
         "alt_text": payload["alt_text"],
-        "media": {"png_path": payload.get("exports", {}).get("png_path")},
+        "media": {
+            "square_png_path": payload.get("exports", {}).get("square_png_path"),
+            "png_path": payload.get("exports", {}).get("png_path"),
+        },
         "media_items": payload.get("exports", {}).get("png_paths", []),
+        "carousel_media_items": payload.get("exports", {}).get("carousel_png_paths", []),
         "events": payload["events"],
         "carousel_slides": payload.get("carousel_slides", []),
         "manual_posting_checklist": [
@@ -378,6 +458,40 @@ def export_scheduling_json(post_id: int, payload: dict) -> Path:
     }
     path.write_text(json.dumps(schedule_payload, indent=2), encoding="utf-8")
     return path
+
+
+def export_post_assets(post: SocialPost) -> dict:
+    payload = dict(post.preview_payload or {})
+    if not payload:
+        raise ValueError("Post has no preview payload to export.")
+    square_path = export_square_png(payload)
+    png_paths = export_carousel_pngs(payload)
+    payload["exports"] = {
+        "square_png_path": str(square_path),
+        "png_path": str(png_paths[0]),
+        "png_paths": [str(path) for path in png_paths],
+        "carousel_png_paths": [str(path) for path in png_paths],
+    }
+    json_path = export_scheduling_json(post.id, payload)
+    payload["exports"]["json_path"] = str(json_path)
+    post.preview_payload = payload
+    return payload["exports"]
+
+
+def planned_publish_time(post_format: str, now: datetime | None = None) -> datetime:
+    now = now or datetime.utcnow()
+    offsets = {
+        "weekly_top_10": (0, 18),
+        "weekend_picks": (3, 11),
+        "under_15": (1, 18),
+        "hidden_gem": (2, 18),
+        "tonight": (0, 12),
+        "new_artist_spotlight": (4, 12),
+        "venue_spotlight": (5, 12),
+    }
+    days, hour = offsets.get(post_format, (0, 18))
+    planned = now + timedelta(days=days)
+    return planned.replace(hour=hour, minute=0, second=0, microsecond=0)
 
 
 def format_price(event: Event) -> str:

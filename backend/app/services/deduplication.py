@@ -34,9 +34,8 @@ def dedupe_city(db: Session, city_slug: str) -> DedupeReport:
     groups: dict[str, list[Event]] = {}
 
     for event in events:
-        artist_name = event.artist.name if event.artist else event.title
         venue_name = event.venue.name if event.venue else "Venue TBC"
-        fingerprint = fingerprint_parts(city.slug, artist_name, venue_name, event.starts_at)
+        fingerprint = fingerprint_parts(city.slug, event.title, venue_name, event.starts_at)
         groups.setdefault(fingerprint, []).append(event)
 
     for fingerprint, duplicate_events in groups.items():
@@ -72,6 +71,7 @@ def dedupe_city(db: Session, city_slug: str) -> DedupeReport:
 
 def merge_event(keeper: Event, duplicate: Event) -> None:
     keeper.ticket_url = keeper.ticket_url or duplicate.ticket_url
+    keeper.source_url = keeper.source_url or duplicate.source_url
     keeper.image_url = keeper.image_url or duplicate.image_url
     keeper.price_min = keeper.price_min or duplicate.price_min
     keeper.price_max = keeper.price_max or duplicate.price_max

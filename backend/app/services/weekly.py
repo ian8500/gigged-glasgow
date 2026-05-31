@@ -21,6 +21,7 @@ class WeeklyReport:
     events_selected: int
     post_created: bool
     coverage_report: dict
+    pre_publish_report: dict
 
 
 def generate_weekly_issue(db: Session, city_slug: str) -> WeeklyReport:
@@ -29,6 +30,7 @@ def generate_weekly_issue(db: Session, city_slug: str) -> WeeklyReport:
         raise ValueError(f"City '{city_slug}' has not been seeded.")
 
     coverage_report = run_all_venue_checks(db, city_slug)
+    pre_publish_report = coverage_report["pre_publish_report"]
 
     starts_on, ends_on = next_friday_to_thursday()
     slug = slugify(f"{city.slug} gigs {starts_on.isoformat()}")
@@ -103,6 +105,7 @@ def generate_weekly_issue(db: Session, city_slug: str) -> WeeklyReport:
                     },
                     "window": f"{starts_on.isoformat()} to {ends_on.isoformat()}",
                     "coverage_report": coverage_report["summary"],
+                    "pre_publish_report": pre_publish_report,
                     "events": [
                         {
                             "title": event.title,
@@ -122,6 +125,7 @@ def generate_weekly_issue(db: Session, city_slug: str) -> WeeklyReport:
         events_selected=len(events),
         post_created=post_created,
         coverage_report=coverage_report["summary"],
+        pre_publish_report=pre_publish_report,
     )
 
 
@@ -139,6 +143,7 @@ def build_issue_summary(events: list[Event], coverage_report: dict | None = None
         coverage_lines = [
             "Coverage preflight:",
             str(summary.get("explanation", "Coverage report unavailable.")),
+            f"Safe to publish: {coverage_report.get('pre_publish_report', {}).get('safe_to_publish', False)}",
         ]
         coverage_lines.extend(f"- {item}" for item in summary.get("missing", [])[:4])
     if not events:

@@ -3,29 +3,35 @@ from __future__ import annotations
 import csv
 import io
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from slugify import slugify
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_db, require_admin
-from app.models.artist import Artist
 from app.models.city import City
 from app.models.event import Event
+from app.models.ingestion_log import IngestionLog
 from app.models.social_post import SocialPost
 from app.models.venue import Venue
+from app.models.weekly_issue import WeeklyIssue
 from app.schemas.event import EventAdminEdit, EventCreate, EventCsvImport, EventRead
 from app.schemas.social_post import SocialPostEdit, SocialPostRead
 from app.schemas.venue import VenueCreate, VenueRead
 from app.services.city_brands import create_city_from_template, city_brand_payload, city_template_payloads
 from app.services.deduplication import merge_event
-from app.services.ingestion import ensure_source, find_or_create_artist, find_or_create_venue
+from app.services.ingestion import (
+    ensure_source,
+    find_or_create_artist,
+    find_or_create_venue,
+    ingest_city,
+    ingestion_log_payload,
+)
 from app.services.meta_publishing import get_meta_readiness, publish_via_meta_placeholder
 from app.services.normalization import event_slug, fingerprint_parts
 from app.services.seed import seed_glasgow
-from app.services.social_generation import generate_social_posts, regenerate_post
+from app.services.social_generation import export_post_assets, generate_social_posts, regenerate_post
 from app.services.venue_coverage import (
     check_venue_now,
     run_all_venue_checks,
@@ -33,6 +39,8 @@ from app.services.venue_coverage import (
     venue_coverage_payload,
 )
 from app.services.weekly import generate_weekly_issue
+from app.services.weekly_run import run_weekly_issue_workflow
+from app.sources.ticketmaster import TicketmasterDiscoveryAdapter
 
 router = APIRouter(dependencies=[Depends(require_admin)])
 
@@ -81,6 +89,41 @@ def dashboard(city: str = "glasgow", db: Session = Depends(get_db)) -> dict:
 def seed_glasgow_endpoint(db: Session = Depends(get_db)) -> dict[str, str]:
     seed_glasgow(db)
     return {"status": "seeded", "city": "glasgow"}
+
+
+@router.post("/ingest/ticketmaster")
+def run_ticketmaster_ingest(city: str = "glasgow", db: Session = Depends(get_db)) -> dict:
+    if city != "glasgow":
+        raise HTTPException(status_code=400, detail="Ticketmaster Phase 1 only supports Glasgow")
+    report = ingest_city(db, city, adapters=[TicketmasterDiscoveryAdapter()])
+    return {
+        "city": report.city,
+        "source": "Ticketmaster Discovery API",
+        "events_found": report.fetched,
+        "events_created": report.created,
+        "events_updated": report.updated,
+        "duplicates_skipped": report.skipped,
+        "failures": report.failures,
+        "warnings": report.warnings,
+        "logs": report.source_logs,
+    }
+
+
+@router.get("/ingest/logs")
+def ingest_logs(
+    city: str = "glasgow",
+    source_name: str | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    statement = (
+        select(IngestionLog)
+        .where(IngestionLog.city_slug == city)
+    )
+    if source_name:
+        statement = statement.where(IngestionLog.source_name == source_name)
+    statement = statement.order_by(IngestionLog.started_at.desc()).limit(min(limit, 200))
+    return [ingestion_log_payload(log) for log in db.scalars(statement)]
 
 
 @router.get("/venue-coverage")
@@ -211,6 +254,8 @@ def admin_events(
         statement = statement.where(Event.needs_review.is_(False), Event.status == "scheduled")
     elif view == "rejected":
         statement = statement.where(Event.status == "rejected")
+    elif view == "imported":
+        statement = statement.where(Event.source_attribution != "Manual admin entry")
 
     return [event_admin_payload(event) for event in db.scalars(statement)]
 
@@ -238,7 +283,7 @@ def edit_event(event_id: int, payload: EventAdminEdit, db: Session = Depends(get
     if event.artist and event.venue:
         event.normalized_fingerprint = fingerprint_parts(
             event.city.slug,
-            event.artist.name,
+            event.title,
             event.venue.name,
             event.starts_at,
         )
@@ -310,7 +355,7 @@ def add_manual_event(payload: EventCreate, db: Session = Depends(get_db)) -> dic
         raise HTTPException(status_code=404, detail="City or venue not found")
     source = ensure_source(db, "Manual admin entry", "manual")
     artist = find_or_create_artist(db, payload.title)
-    fingerprint = fingerprint_parts(city.slug, artist.name, venue.name, payload.starts_at)
+    fingerprint = fingerprint_parts(city.slug, payload.title, venue.name, payload.starts_at)
     event = Event(
         city_id=city.id,
         venue_id=venue.id,
@@ -347,7 +392,7 @@ def import_events_csv(payload: EventCsvImport, db: Session = Depends(get_db)) ->
         starts_at = datetime.fromisoformat(row["starts_at"])
         venue = find_or_create_venue(db, city, [], row["venue_name"])
         artist = find_or_create_artist(db, row.get("artist_name") or row["title"])
-        fingerprint = fingerprint_parts(city.slug, artist.name, venue.name, starts_at)
+        fingerprint = fingerprint_parts(city.slug, row["title"], venue.name, starts_at)
         if db.scalar(select(Event).where(Event.city_id == city.id, Event.normalized_fingerprint == fingerprint)):
             continue
         db.add(
@@ -382,6 +427,68 @@ def generate_weekly(city: str = "glasgow", db: Session = Depends(get_db)) -> dic
         "events_selected": report.events_selected,
         "post_created": report.post_created,
         "coverage_report": report.coverage_report,
+        "pre_publish_report": report.pre_publish_report,
+    }
+
+
+@router.get("/weekly-run")
+def weekly_run_dashboard(city: str = "glasgow", db: Session = Depends(get_db)) -> dict:
+    city_record = db.scalar(select(City).where(City.slug == city))
+    if city_record is None:
+        raise HTTPException(status_code=404, detail="City not found")
+
+    latest_issue = db.scalar(
+        select(WeeklyIssue)
+        .where(WeeklyIssue.city_id == city_record.id)
+        .order_by(WeeklyIssue.generated_at.desc().nullslast(), WeeklyIssue.created_at.desc())
+        .limit(1)
+    )
+    review_posts = list(
+        db.scalars(
+            select(SocialPost)
+            .where(SocialPost.city_id == city_record.id, SocialPost.status.in_(["needs_review", "review"]))
+            .order_by(SocialPost.created_at.desc())
+        )
+    )
+    return {
+        "title": "Weekly Run",
+        "city": city_record.slug,
+        "latest_issue": weekly_issue_payload(latest_issue) if latest_issue else None,
+        "review_queue_count": len(review_posts),
+        "review_queue": [social_post_payload(post) for post in review_posts],
+        "actions": {
+            "run": "/api/v1/admin/weekly-run/run",
+            "approve": "/api/v1/admin/social/{post_id}/approve",
+            "edit": "/api/v1/admin/social/{post_id}",
+            "regenerate": "/api/v1/admin/social/{post_id}/regenerate",
+            "export": "/api/v1/admin/social/{post_id}/export",
+            "reject": "/api/v1/admin/social/{post_id}/reject",
+            "copy_caption": "/api/v1/admin/social/{post_id}/copy/caption",
+            "copy_hashtags": "/api/v1/admin/social/{post_id}/copy/hashtags",
+            "calendar": "/api/v1/admin/social/calendar",
+            "media_library": "/api/v1/admin/social/media-library",
+        },
+    }
+
+
+@router.post("/weekly-run/run")
+def run_weekly_run(city: str = "glasgow", db: Session = Depends(get_db)) -> dict:
+    try:
+        report = run_weekly_issue_workflow(db, city)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "city": report.city,
+        "issue_id": report.issue_id,
+        "issue_slug": report.issue_slug,
+        "ingest": report.ingest,
+        "venue_coverage": report.venue_coverage,
+        "dedupe": report.dedupe,
+        "candidate_events": report.candidates,
+        "posts_created": report.posts_created,
+        "review_queue_count": report.review_queue_count,
+        "auto_publish": False,
+        "safe_to_publish": report.safe_to_publish,
     }
 
 
@@ -394,19 +501,79 @@ def generate_social_queue(city: str = "glasgow", db: Session = Depends(get_db)) 
 @router.get("/social/review-queue", response_model=list[SocialPostRead])
 def social_review_queue(
     city: str = "glasgow",
-    status: str = "review",
+    status: str = "needs_review",
     db: Session = Depends(get_db),
 ) -> list[SocialPost]:
     city_record = db.scalar(select(City).where(City.slug == city))
     if city_record is None:
         raise HTTPException(status_code=404, detail="City not found")
+    statuses = ["needs_review", "review"] if status == "needs_review" else [status]
     return list(
         db.scalars(
             select(SocialPost)
-            .where(SocialPost.city_id == city_record.id, SocialPost.status == status)
+            .where(SocialPost.city_id == city_record.id, SocialPost.status.in_(statuses))
             .order_by(SocialPost.created_at.desc())
         )
     )
+
+
+@router.get("/social/calendar")
+def social_calendar(city: str = "glasgow", db: Session = Depends(get_db)) -> dict:
+    city_record = db.scalar(select(City).where(City.slug == city))
+    if city_record is None:
+        raise HTTPException(status_code=404, detail="City not found")
+    start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=7)
+    posts = list(
+        db.scalars(
+            select(SocialPost)
+            .where(
+                SocialPost.city_id == city_record.id,
+                SocialPost.planned_for >= start,
+                SocialPost.planned_for < end,
+            )
+            .order_by(SocialPost.planned_for.asc(), SocialPost.created_at.asc())
+        )
+    )
+    return {
+        "city": city_record.slug,
+        "starts_at": start.isoformat(),
+        "ends_at": end.isoformat(),
+        "posts": [social_post_payload(post) for post in posts],
+    }
+
+
+@router.get("/social/media-library")
+def social_media_library(city: str = "glasgow", db: Session = Depends(get_db)) -> dict:
+    city_record = db.scalar(select(City).where(City.slug == city))
+    if city_record is None:
+        raise HTTPException(status_code=404, detail="City not found")
+    posts = list(
+        db.scalars(
+            select(SocialPost)
+            .where(SocialPost.city_id == city_record.id)
+            .order_by(SocialPost.created_at.desc())
+            .limit(100)
+        )
+    )
+    media = []
+    for post in posts:
+        exports = (post.preview_payload or {}).get("exports", {})
+        if not exports:
+            continue
+        media.append(
+            {
+                "post_id": post.id,
+                "template_name": post.template_name,
+                "status": post.status,
+                "planned_for": post.planned_for.isoformat() if post.planned_for else None,
+                "square_png_path": exports.get("square_png_path"),
+                "carousel_png_paths": exports.get("carousel_png_paths") or exports.get("png_paths", []),
+                "json_path": exports.get("json_path"),
+                "alt_text": (post.preview_payload or {}).get("alt_text"),
+            }
+        )
+    return {"city": city_record.slug, "media": media}
 
 
 @router.patch("/social/{post_id}", response_model=SocialPostRead)
@@ -455,16 +622,16 @@ def schedule_social_post(post_id: int, db: Session = Depends(get_db)) -> SocialP
     post = db.get(SocialPost, post_id)
     if post is None:
         raise HTTPException(status_code=404, detail="Social post not found")
-    if post.status not in {"approved", "scheduled"}:
-        raise HTTPException(status_code=400, detail="Only approved posts can be scheduled.")
+    if post.status not in {"approved", "exported"}:
+        raise HTTPException(status_code=400, detail="Only approved or exported posts can be marked for manual posting.")
     preview = dict(post.preview_payload or {})
-    preview["status"] = "scheduled"
+    preview["status"] = "exported"
     preview["publishing"] = {
         **dict(preview.get("publishing") or {}),
         "auto_publish": False,
         "mode": "manual_export",
     }
-    post.status = "scheduled"
+    post.status = "exported"
     post.preview_payload = preview
     db.commit()
     db.refresh(post)
@@ -508,10 +675,78 @@ def regenerate_social_post(post_id: int, db: Session = Depends(get_db)) -> Socia
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/social/{post_id}/export")
+def export_social_post(post_id: int, db: Session = Depends(get_db)) -> dict:
+    post = db.get(SocialPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="Social post not found")
+    try:
+        exports = export_post_assets(post)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    post.status = "exported"
+    post.exported_at = datetime.utcnow()
+    preview = dict(post.preview_payload or {})
+    preview["status"] = "exported"
+    post.preview_payload = preview
+    db.commit()
+    return {"post_id": post.id, "status": post.status, "exports": exports, "auto_publish": False}
+
+
+@router.post("/social/{post_id}/posted-manually", response_model=SocialPostRead)
+def mark_social_post_posted_manually(post_id: int, db: Session = Depends(get_db)) -> SocialPost:
+    post = db.get(SocialPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="Social post not found")
+    post.status = "posted_manually"
+    post.posted_manually_at = datetime.utcnow()
+    preview = dict(post.preview_payload or {})
+    preview["status"] = "posted_manually"
+    preview["publishing"] = {
+        **dict(preview.get("publishing") or {}),
+        "auto_publish": False,
+        "mode": "manual_export",
+        "posted_manually_at": post.posted_manually_at.isoformat(),
+    }
+    post.preview_payload = preview
+    db.commit()
+    db.refresh(post)
+    return post
+
+
+@router.get("/social/{post_id}/copy/caption")
+def copy_social_caption(post_id: int, db: Session = Depends(get_db)) -> dict:
+    post = db.get(SocialPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="Social post not found")
+    return {"post_id": post.id, "copy_text": post.caption or "", "button_label": "Copy caption"}
+
+
+@router.get("/social/{post_id}/copy/hashtags")
+def copy_social_hashtags(post_id: int, db: Session = Depends(get_db)) -> dict:
+    post = db.get(SocialPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="Social post not found")
+    hashtags = (post.preview_payload or {}).get("hashtags", [])
+    return {"post_id": post.id, "copy_text": " ".join(hashtags), "button_label": "Copy hashtags"}
+
+
+@router.get("/social/{post_id}/copy/alt-text")
+def copy_social_alt_text(post_id: int, db: Session = Depends(get_db)) -> dict:
+    post = db.get(SocialPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="Social post not found")
+    alt_text = (post.preview_payload or {}).get("alt_text") or ""
+    return {"post_id": post.id, "copy_text": alt_text, "button_label": "Copy alt text"}
+
+
 def set_social_status(db: Session, post_id: int, status: str) -> SocialPost:
     post = db.get(SocialPost, post_id)
     if post is None:
         raise HTTPException(status_code=404, detail="Social post not found")
+    allowed = {"draft", "needs_review", "approved", "exported", "posted_manually", "rejected"}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="Unsupported social post status")
     preview = dict(post.preview_payload or {})
     post.status = status
     preview["status"] = status
@@ -519,6 +754,59 @@ def set_social_status(db: Session, post_id: int, status: str) -> SocialPost:
     db.commit()
     db.refresh(post)
     return post
+
+
+def weekly_issue_payload(issue: WeeklyIssue) -> dict:
+    return {
+        "id": issue.id,
+        "title": issue.title,
+        "slug": issue.slug,
+        "starts_on": issue.starts_on.isoformat(),
+        "ends_on": issue.ends_on.isoformat(),
+        "status": issue.status,
+        "summary": issue.summary,
+        "generated_at": issue.generated_at.isoformat() if issue.generated_at else None,
+    }
+
+
+def social_post_payload(post: SocialPost) -> dict:
+    payload = post.preview_payload or {}
+    hashtags = payload.get("hashtags", [])
+    return {
+        "id": post.id,
+        "weekly_issue_id": post.weekly_issue_id,
+        "event_id": post.event_id,
+        "platform": post.platform,
+        "template_name": post.template_name,
+        "caption": post.caption,
+        "hashtags": hashtags,
+        "alt_text": payload.get("alt_text"),
+        "status": post.status,
+        "planned_for": post.planned_for.isoformat() if post.planned_for else None,
+        "exported_at": post.exported_at.isoformat() if post.exported_at else None,
+        "posted_manually_at": (
+            post.posted_manually_at.isoformat() if post.posted_manually_at else None
+        ),
+        "exports": payload.get("exports", {}),
+        "copy_actions": {
+            "caption": {
+                "label": "Copy caption",
+                "text": post.caption or "",
+                "endpoint": f"/api/v1/admin/social/{post.id}/copy/caption",
+            },
+            "hashtags": {
+                "label": "Copy hashtags",
+                "text": " ".join(hashtags),
+                "endpoint": f"/api/v1/admin/social/{post.id}/copy/hashtags",
+            },
+            "alt_text": {
+                "label": "Copy alt text",
+                "text": payload.get("alt_text") or "",
+                "endpoint": f"/api/v1/admin/social/{post.id}/copy/alt-text",
+            },
+        },
+        "created_at": post.created_at.isoformat() if post.created_at else None,
+    }
 
 
 def require_event(db: Session, event_id: int) -> Event:
@@ -538,6 +826,9 @@ def event_admin_payload(event: Event) -> dict:
         "venue_slug": event.venue.slug if event.venue else None,
         "starts_at": event.starts_at.isoformat(),
         "ticket_url": event.ticket_url,
+        "source_url": event.source_url,
+        "source_event_id": event.source_event_id,
+        "image_url": event.image_url,
         "genre": event.genre,
         "price_min": str(event.price_min) if event.price_min is not None else None,
         "price_max": str(event.price_max) if event.price_max is not None else None,

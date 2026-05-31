@@ -41,6 +41,7 @@ class EventRead(BaseModel):
     starts_at: datetime
     ends_at: datetime | None
     ticket_url: str | None
+    source_url: str | None
     image_url: str | None
     price_min: Decimal | None
     price_max: Decimal | None

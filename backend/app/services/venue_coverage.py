@@ -19,6 +19,7 @@ from app.models.city import City
 from app.models.event import Event
 from app.models.venue import Venue
 from app.models.venue_check_log import VenueCheckLog
+from app.models.venue_coverage import VenueCoverage
 
 SEED_DIR = Path(__file__).resolve().parents[2] / "seeds"
 USER_AGENT = "GiggedGlasgowVenueCoverage/0.1 (+manual editorial review)"
@@ -93,6 +94,9 @@ class VenueCheckResult:
     venue_id: int
     venue_name: str
     status: str
+    source_name: str
+    source_url: str | None
+    coverage_type: str
     coverage_status: str
     confidence_score: float
     events_found: int
@@ -127,6 +131,17 @@ def seed_glasgow_venue_coverage(db: Session) -> int:
         venue.status = item.get("status") or venue.status or "active"
         venue.notes = item.get("notes")
         venue.is_whitelisted = True
+        upsert_venue_coverage(
+            db,
+            venue=venue,
+            source_name=item.get("source_name") or "Official venue page",
+            source_url=item.get("event_listings_url") or item.get("website_url"),
+            coverage_type=item.get("coverage_type") or infer_seed_coverage_type(item),
+            status=item.get("coverage_source_status") or "needs_review",
+            error_message=None,
+            confidence_score=0.5,
+            preserve_checked_state=True,
+        )
         upserted += 1
     db.commit()
     return upserted
@@ -138,16 +153,21 @@ def venue_coverage_payload(db: Session, city_slug: str = "glasgow") -> dict[str,
         db.scalars(
             select(Venue)
             .where(Venue.city_id == city.id)
-            .options(joinedload(Venue.check_logs))
+            .options(
+                joinedload(Venue.check_logs),
+                joinedload(Venue.coverage_sources),
+                joinedload(Venue.events),
+            )
             .order_by(Venue.name.asc())
         )
         .unique()
     )
-    summary = build_coverage_summary(venues)
+    summary = build_coverage_summary(db, venues)
     return {
         "city": city.name,
         "city_slug": city.slug,
         "summary": summary,
+        "pre_publish_report": build_pre_publish_report(summary, venues),
         "discovery_sources": DISCOVERY_SOURCES,
         "venues": [venue_payload(venue) for venue in venues],
     }
@@ -170,6 +190,10 @@ def check_venue_now(db: Session, venue_id: int, live_http: bool = True) -> Venue
     now = datetime.utcnow()
     supported_sources = detect_supported_sources(venue)
     candidate_url = venue.event_listings_url or guess_events_url(venue.website_url)
+    source_name = "Official venue page" if candidate_url else "Manual editorial fallback"
+    coverage_type = "website" if candidate_url else "manual"
+    source_status = "needs_review"
+    error_message = None
     future_event_count = db.scalar(
         select(func.count(Event.id)).where(Event.venue_id == venue.id, Event.starts_at >= now)
     ) or 0
@@ -193,6 +217,7 @@ def check_venue_now(db: Session, venue_id: int, live_http: bool = True) -> Venue
     if candidate_url and not live_http:
         coverage_status = "manual_only"
         status = "active"
+        source_status = "needs_review"
         confidence = 0.55
         message = "Batch preflight confirmed venue source metadata; run Check now for a live robots-aware page check."
     elif candidate_url:
@@ -205,33 +230,41 @@ def check_venue_now(db: Session, venue_id: int, live_http: bool = True) -> Venue
             if page_status["ok"]:
                 coverage_status = "automated"
                 status = "active"
+                source_status = "working"
                 confidence = 0.75
                 if page_status["has_event_signals"]:
                     confidence = 0.9
                     message = "Official events page is reachable and contains event-like signals."
                 else:
                     structure_changed = True
-                    status = "needs_review"
+                    source_status = "needs_review"
                     confidence = 0.62
                     message = "Official page is reachable, but expected event signals were not found."
             else:
                 coverage_status = "broken"
-                status = "needs_review"
+                source_status = "broken"
                 structure_changed = bool(page_status.get("structure_changed"))
                 confidence = 0.25
                 message = page_status["message"]
+                error_message = message
         else:
+            coverage_type = "unsupported"
             coverage_status = "unsupported"
-            status = "needs_review"
+            source_status = "needs_review"
             confidence = 0.2
             message = robots_message
+            error_message = robots_message
 
     if future_event_count:
         venue.last_event_found_at = latest_event_datetime(db, venue.id)
         confidence = max(confidence, 0.82)
-        if coverage_status in {"manual_only", "unsupported"} and supported_sources:
+        if coverage_status in {"manual_only", "unsupported"} and supported_sources and source_status == "working":
             coverage_status = "automated"
         message = f"{future_event_count} upcoming events already linked to this venue."
+
+    if venue.status == "closed":
+        source_status = "inactive"
+        status = "closed"
 
     venue.last_checked_at = now
     venue.coverage_status = coverage_status
@@ -240,6 +273,19 @@ def check_venue_now(db: Session, venue_id: int, live_http: bool = True) -> Venue
         venue.event_listings_url = candidate_url
     if message:
         venue.notes = merge_note(venue.notes, message)
+
+    coverage = upsert_venue_coverage(
+        db,
+        venue=venue,
+        source_name=source_name,
+        source_url=candidate_url,
+        coverage_type=coverage_type,
+        status=source_status,
+        last_checked_at=now,
+        last_successful_event_found_at=venue.last_event_found_at if future_event_count else None,
+        error_message=error_message,
+        confidence_score=confidence,
+    )
 
     log = VenueCheckLog(
         venue_id=venue.id,
@@ -261,7 +307,10 @@ def check_venue_now(db: Session, venue_id: int, live_http: bool = True) -> Venue
     return VenueCheckResult(
         venue_id=venue.id,
         venue_name=venue.name,
-        status=status,
+        status=coverage.status,
+        source_name=coverage.source_name,
+        source_url=coverage.source_url,
+        coverage_type=coverage.coverage_type,
         coverage_status=coverage_status,
         confidence_score=confidence,
         events_found=future_event_count,
@@ -270,34 +319,61 @@ def check_venue_now(db: Session, venue_id: int, live_http: bool = True) -> Venue
     )
 
 
-def build_coverage_summary(venues: list[Venue]) -> dict[str, Any]:
+def build_coverage_summary(db: Session, venues: list[Venue]) -> dict[str, Any]:
     now = datetime.utcnow()
     stale_cutoff = now - timedelta(days=30)
     total = len(venues)
-    automated = count_where(venues, lambda venue: venue.coverage_status == "automated")
-    manual_only = count_where(venues, lambda venue: venue.coverage_status == "manual_only")
-    needs_review = count_where(venues, lambda venue: venue.status == "needs_review")
-    broken = count_where(venues, lambda venue: venue.coverage_status == "broken")
-    unsupported = count_where(venues, lambda venue: venue.coverage_status == "unsupported")
+    upcoming_counts = upcoming_event_counts(db, venues)
+    automated = count_where(venues, has_working_automated_source)
+    manual_only = count_where(venues, is_manual_only)
+    needs_review = count_where(venues, lambda venue: any(source.status == "needs_review" for source in venue.coverage_sources))
+    broken = sum(1 for venue in venues for source in venue.coverage_sources if source.status == "broken")
+    unsupported = count_where(venues, lambda venue: any(source.coverage_type == "unsupported" for source in venue.coverage_sources))
     duplicate = count_where(venues, lambda venue: venue.status == "duplicate")
     monitored = count_where(
         venues,
         lambda venue: venue.status in {"active", "needs_review"}
-        and venue.coverage_status in {"automated", "manual_only", "broken"},
+        and any(source.status in {"working", "needs_review", "broken"} for source in venue.coverage_sources),
     )
-    successful_event_pulls = count_where(venues, lambda venue: venue.last_event_found_at is not None)
-    no_events_found = count_where(venues, lambda venue: venue.last_event_found_at is None)
+    successful_event_pulls = count_where(
+        venues,
+        lambda venue: any(source.last_successful_event_found_at for source in venue.coverage_sources),
+    )
+    no_events_found = count_where(venues, lambda venue: upcoming_counts.get(venue.id, 0) == 0)
     not_checked_30_days = count_where(
         venues,
-        lambda venue: venue.last_checked_at is None or venue.last_checked_at < stale_cutoff,
+        lambda venue: source_stale(venue, stale_cutoff),
     )
     possible_duplicate_groups = possible_duplicate_count(venues)
     score = calculate_score(total, automated, manual_only, needs_review, broken, unsupported, duplicate, not_checked_30_days)
+    sources_checked = sum(
+        1
+        for venue in venues
+        for source in venue.coverage_sources
+        if source.last_checked_at is not None
+    )
+    sources_working = sum(
+        1
+        for venue in venues
+        for source in venue.coverage_sources
+        if source.status == "working"
+    )
+    sources_failed = broken
     explanation = (
         f"{total} venues tracked, {automated} automated, {manual_only} manual-only, "
         f"{needs_review} need review."
     )
     return {
+        "total_venues": total,
+        "automated_venues": automated,
+        "manual_only_venues": manual_only,
+        "broken_venue_sources": broken,
+        "venues_not_checked_in_30_days": not_checked_30_days,
+        "venues_with_no_upcoming_events": no_events_found,
+        "coverage_percentage": score,
+        "sources_checked": sources_checked,
+        "sources_working": sources_working,
+        "sources_failed": sources_failed,
         "total_venues_discovered": total,
         "venues_currently_monitored": monitored,
         "venues_with_successful_event_pulls": successful_event_pulls,
@@ -311,7 +387,8 @@ def build_coverage_summary(venues: list[Venue]) -> dict[str, Any]:
         "unsupported": unsupported,
         "coverage_score": score,
         "explanation": explanation,
-        "missing": build_missing_list(total, manual_only, needs_review, broken, unsupported, not_checked_30_days),
+        "missing": build_missing_list(total, manual_only, needs_review, broken, unsupported, not_checked_30_days, no_events_found),
+        "venues_may_be_missing_events": venues_missing_events(venues, upcoming_counts),
     }
 
 
@@ -335,6 +412,8 @@ def venue_payload(venue: Venue) -> dict[str, Any]:
         "status": venue.status,
         "coverage_status": venue.coverage_status,
         "notes": venue.notes,
+        "upcoming_events": upcoming_event_count_for_venue(venue),
+        "coverage_sources": [coverage_source_payload(source) for source in venue.coverage_sources],
         "latest_check": {
             "checked_at": latest_log.checked_at.isoformat(),
             "confidence_score": latest_log.confidence_score,
@@ -344,6 +423,24 @@ def venue_payload(venue: Venue) -> dict[str, Any]:
         }
         if latest_log
         else None,
+    }
+
+
+def coverage_source_payload(source: VenueCoverage) -> dict[str, Any]:
+    return {
+        "id": source.id,
+        "source_name": source.source_name,
+        "source_url": source.source_url,
+        "coverage_type": source.coverage_type,
+        "status": source.status,
+        "last_checked_at": source.last_checked_at.isoformat() if source.last_checked_at else None,
+        "last_successful_event_found_at": (
+            source.last_successful_event_found_at.isoformat()
+            if source.last_successful_event_found_at
+            else None
+        ),
+        "error_message": source.error_message,
+        "confidence_score": source.confidence_score,
     }
 
 
@@ -372,6 +469,137 @@ def detect_supported_sources(venue: Venue) -> list[str]:
     if venue.event_listings_url or venue.website_url:
         supported.append("Official venue page")
     return supported
+
+
+def upsert_venue_coverage(
+    db: Session,
+    venue: Venue,
+    source_name: str,
+    source_url: str | None,
+    coverage_type: str,
+    status: str,
+    last_checked_at: datetime | None = None,
+    last_successful_event_found_at: datetime | None = None,
+    error_message: str | None = None,
+    confidence_score: float = 0.5,
+    preserve_checked_state: bool = False,
+) -> VenueCoverage:
+    coverage = db.scalar(
+        select(VenueCoverage).where(
+            VenueCoverage.venue_id == venue.id,
+            VenueCoverage.source_name == source_name,
+        )
+    )
+    if coverage is None:
+        coverage = VenueCoverage(venue_id=venue.id, source_name=source_name)
+        db.add(coverage)
+        db.flush()
+
+    coverage.source_url = source_url
+    coverage.coverage_type = coverage_type
+    if not preserve_checked_state or coverage.last_checked_at is None:
+        coverage.status = status
+        coverage.last_checked_at = last_checked_at
+        coverage.last_successful_event_found_at = last_successful_event_found_at
+        coverage.error_message = error_message
+        coverage.confidence_score = confidence_score
+    return coverage
+
+
+def infer_seed_coverage_type(item: dict[str, Any]) -> str:
+    values = " ".join(
+        str(value).lower()
+        for value in [item.get("event_listings_url"), item.get("ticketing_url"), item.get("website_url")]
+        if value
+    )
+    if "ticketmaster" in values:
+        return "api"
+    if item.get("event_listings_url") or item.get("website_url"):
+        return "website"
+    return "manual"
+
+
+def has_working_automated_source(venue: Venue) -> bool:
+    return any(
+        source.coverage_type in {"api", "website"} and source.status == "working"
+        for source in venue.coverage_sources
+    )
+
+
+def is_manual_only(venue: Venue) -> bool:
+    if not venue.coverage_sources:
+        return True
+    return not any(
+        source.coverage_type in {"api", "website"} and source.status == "working"
+        for source in venue.coverage_sources
+    )
+
+
+def source_stale(venue: Venue, stale_cutoff: datetime) -> bool:
+    if not venue.coverage_sources:
+        return True
+    return all(
+        source.last_checked_at is None or source.last_checked_at < stale_cutoff
+        for source in venue.coverage_sources
+    )
+
+
+def upcoming_event_counts(db: Session, venues: list[Venue]) -> dict[int, int]:
+    if not venues:
+        return {}
+    venue_ids = [venue.id for venue in venues]
+    rows = db.execute(
+        select(Event.venue_id, func.count(Event.id))
+        .where(Event.venue_id.in_(venue_ids), Event.starts_at >= datetime.utcnow())
+        .group_by(Event.venue_id)
+    ).all()
+    return {venue_id: count for venue_id, count in rows}
+
+
+def upcoming_event_count_for_venue(venue: Venue) -> int:
+    now = datetime.utcnow()
+    return sum(1 for event in venue.events if event.starts_at >= now and event.status != "rejected")
+
+
+def venues_missing_events(venues: list[Venue], upcoming_counts: dict[int, int]) -> list[dict[str, Any]]:
+    missing = []
+    for venue in venues:
+        if upcoming_counts.get(venue.id, 0) > 0:
+            continue
+        missing.append(
+            {
+                "venue_id": venue.id,
+                "venue_name": venue.name,
+                "reason": "No upcoming events are currently linked to this venue.",
+                "coverage_sources": [
+                    coverage_source_payload(source) for source in venue.coverage_sources
+                ],
+            }
+        )
+    return missing
+
+
+def build_pre_publish_report(summary: dict[str, Any], venues: list[Venue]) -> dict[str, Any]:
+    missing_events = summary.get("venues_may_be_missing_events", [])
+    sources_failed = summary.get("sources_failed", 0)
+    stale = summary.get("venues_not_checked_in_30_days", 0)
+    coverage_percentage = summary.get("coverage_percentage", 0)
+    safe_to_publish = (
+        sources_failed == 0
+        and stale == 0
+        and coverage_percentage >= 70
+        and len(missing_events) <= max(2, len(venues) // 4)
+    )
+    return {
+        "venues_checked": summary.get("sources_checked", 0),
+        "sources_worked": summary.get("sources_working", 0),
+        "sources_failed": sources_failed,
+        "venues_may_be_missing_events": missing_events,
+        "safe_to_publish": safe_to_publish,
+        "publish_warning": None
+        if safe_to_publish
+        else "Coverage needs editorial review before publishing the weekly roundup.",
+    }
 
 
 def guess_events_url(website_url: str | None) -> str | None:
@@ -493,6 +721,7 @@ def build_missing_list(
     broken: int,
     unsupported: int,
     stale: int,
+    no_events_found: int,
 ) -> list[str]:
     if total == 0:
         return ["No venues have been discovered yet."]
@@ -507,4 +736,6 @@ def build_missing_list(
         missing.append(f"{unsupported} venues are blocked or unsupported for automated checks.")
     if stale:
         missing.append(f"{stale} venues have not been checked in the last 30 days.")
+    if no_events_found:
+        missing.append(f"{no_events_found} venues currently have no upcoming events linked.")
     return missing or ["Coverage is healthy for the current venue set."]

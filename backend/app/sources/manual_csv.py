@@ -61,6 +61,7 @@ class ManualCsvAdapter(EventSourceAdapter):
             venue_name=venue_name,
             starts_at=isoparse(starts_at),
             ticket_url=row.get("ticket_url") or None,
+            source_url=row.get("source_url") or row.get("ticket_url") or None,
             image_url=row.get("image_url") or None,
             price_min=_decimal_from_row(row.get("price_min")),
             price_max=_decimal_from_row(row.get("price_max")),

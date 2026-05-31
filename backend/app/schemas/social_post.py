@@ -16,6 +16,9 @@ class SocialPostRead(BaseModel):
     image_prompt: str | None
     preview_payload: dict | None
     status: str
+    planned_for: datetime | None
+    exported_at: datetime | None
+    posted_manually_at: datetime | None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -27,4 +30,3 @@ class SocialPostEdit(BaseModel):
     description: str | None = None
     hashtags: list[str] | None = None
     status: str | None = None
-

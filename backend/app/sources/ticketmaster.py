@@ -18,23 +18,61 @@ class TicketmasterDiscoveryAdapter(EventSourceAdapter):
     name = "Ticketmaster Discovery API"
     kind = "api"
     base_url = "https://app.ticketmaster.com/discovery/v2/events.json"
+    page_size = 200
 
     def fetch(self, city: CityConfig, start: datetime, end: datetime) -> SourceFetchResult:
+        if city.slug != "glasgow":
+            return SourceFetchResult(
+                source_name=self.name,
+                warnings=["Ticketmaster Phase 1 ingestion is restricted to Glasgow."],
+            )
         if not settings.ticketmaster_api_key:
             return SourceFetchResult(
                 source_name=self.name,
                 warnings=["TICKETMASTER_API_KEY is not set; Ticketmaster ingestion skipped."],
             )
 
+        events: list[NormalizedSourceEvent] = []
+        warnings: list[str] = []
+        failures: list[str] = []
+        page = 0
+        total_pages = 1
+
+        while page < total_pages:
+            payload, error = self._fetch_page(start, end, page)
+            if error:
+                failures.append(error)
+                break
+
+            raw_events = payload.get("_embedded", {}).get("events", [])
+            for item in raw_events:
+                event = self._normalise(item)
+                if event is None:
+                    warnings.append("Ticketmaster event skipped because it had no usable start date.")
+                    continue
+                events.append(event)
+
+            page_info = payload.get("page") or {}
+            total_pages = min(int(page_info.get("totalPages") or 1), 5)
+            page += 1
+
+        return SourceFetchResult(
+            source_name=self.name,
+            events=events,
+            warnings=warnings,
+            failures=failures,
+        )
+
+    def _fetch_page(self, start: datetime, end: datetime, page: int) -> tuple[dict, str | None]:
         params = {
             "apikey": settings.ticketmaster_api_key,
-            "latlong": f"{city.coordinates.latitude},{city.coordinates.longitude}",
-            "radius": str(city.search_radius_km),
-            "unit": "km",
+            "city": "Glasgow",
+            "countryCode": "GB",
             "classificationName": "music",
             "startDateTime": _as_ticketmaster_datetime(start),
             "endDateTime": _as_ticketmaster_datetime(end),
-            "size": "100",
+            "size": str(self.page_size),
+            "page": str(page),
             "sort": "date,asc",
             "includeTBA": "no",
             "includeTBD": "no",
@@ -44,23 +82,11 @@ class TicketmasterDiscoveryAdapter(EventSourceAdapter):
 
         try:
             with urlopen(request, timeout=20) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+                return json.loads(response.read().decode("utf-8")), None
         except HTTPError as exc:
-            return SourceFetchResult(
-                source_name=self.name,
-                warnings=[f"Ticketmaster returned HTTP {exc.code}; ingestion skipped."],
-            )
+            return {}, f"Ticketmaster returned HTTP {exc.code}; ingestion stopped."
         except URLError as exc:
-            return SourceFetchResult(
-                source_name=self.name,
-                warnings=[f"Ticketmaster request failed: {exc.reason}"],
-            )
-
-        raw_events = payload.get("_embedded", {}).get("events", [])
-        return SourceFetchResult(
-            source_name=self.name,
-            events=[event for item in raw_events if (event := self._normalise(item)) is not None],
-        )
+            return {}, f"Ticketmaster request failed: {exc.reason}"
 
     def _normalise(self, item: dict) -> NormalizedSourceEvent | None:
         dates = item.get("dates", {})
@@ -94,6 +120,7 @@ class TicketmasterDiscoveryAdapter(EventSourceAdapter):
             venue_name=venue.get("name", "Venue TBC"),
             starts_at=starts_at,
             ticket_url=item.get("url"),
+            source_url=item.get("url"),
             image_url=images[0].get("url") if images else None,
             price_min=price_min,
             price_max=price_max,
@@ -125,4 +152,3 @@ def _decimal_or_none(value: object) -> Decimal | None:
     if value is None:
         return None
     return Decimal(str(value))
-

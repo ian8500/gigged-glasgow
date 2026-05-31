@@ -21,9 +21,11 @@ class SocialPost(Base):
     image_prompt: Mapped[str | None] = mapped_column(Text)
     preview_payload: Mapped[dict | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(40), default="draft")
+    planned_for: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime)
+    posted_manually_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     city = relationship("City")
     weekly_issue = relationship("WeeklyIssue", back_populates="social_posts")
     event = relationship("Event", back_populates="social_posts")
-
