@@ -1,5 +1,6 @@
 import { generateWeeklyRoundup } from "@/app/admin/actions";
 import { AdminPageHeader } from "@/components/admin/AdminSectionNav";
+import { SubmitButton } from "@/components/admin/SubmitButton";
 import { SocialPostPreview } from "@/components/social/SocialPostPreview";
 import { getAdminEvents } from "@/lib/api";
 
@@ -9,9 +10,9 @@ export default async function WeeklyIssuePage() {
     <main className="space-y-8">
       <AdminPageHeader eyebrow="Issue builder" title="Weekly issue builder">
         <form action={generateWeeklyRoundup}>
-          <button className="rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
+          <SubmitButton pendingText="Running" className="rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
             Generate weekly roundup
-          </button>
+          </SubmitButton>
         </form>
       </AdminPageHeader>
       <section className="grid gap-5 lg:grid-cols-[1fr_380px]">

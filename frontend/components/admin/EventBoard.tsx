@@ -6,6 +6,7 @@ import {
   mergeDuplicateEvents,
   rejectEvent
 } from "@/app/admin/actions";
+import { SubmitButton } from "@/components/admin/SubmitButton";
 import type { AdminEvent } from "@/lib/types";
 
 export function EventBoard({ events, mode }: { events: AdminEvent[]; mode: string }) {
@@ -67,9 +68,9 @@ function EventCard({
                 </option>
               ))}
           </select>
-          <button className="rounded-md border border-bone/15 px-3 py-2 text-sm font-black uppercase tracking-[0.12em] text-bone/75">
+          <SubmitButton pendingText="Merging" className="rounded-md border border-bone/15 px-3 py-2 text-sm font-black uppercase tracking-[0.12em] text-bone/75">
             Merge
-          </button>
+          </SubmitButton>
         </form>
       </div>
 
@@ -80,9 +81,9 @@ function EventCard({
         <input name="ticket_url" defaultValue={event.ticket_url ?? ""} placeholder="Ticket link" className="w-full rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
         <input name="genre" defaultValue={event.genre ?? ""} placeholder="Genre" className="w-full rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
         <textarea name="editorial_note" defaultValue={event.editorial_note ?? ""} placeholder="Short punchy description or editor note" className="h-24 w-full rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
-        <button className="w-full rounded-md border border-clyde px-3 py-2 text-sm font-black uppercase tracking-[0.14em] text-clyde">
+        <SubmitButton pendingText="Saving" className="w-full rounded-md border border-clyde px-3 py-2 text-sm font-black uppercase tracking-[0.14em] text-clyde">
           Save event
-        </button>
+        </SubmitButton>
       </form>
     </article>
   );
@@ -119,9 +120,9 @@ function ActionForm({
   return (
     <form action={action}>
       <input type="hidden" name="eventId" value={eventId} />
-      <button className={`w-full rounded-md px-3 py-2 text-xs font-black uppercase ${tones[tone]}`}>
+      <SubmitButton pendingText="Working" className={`w-full rounded-md px-3 py-2 text-xs font-black uppercase ${tones[tone]}`}>
         {label}
-      </button>
+      </SubmitButton>
     </form>
   );
 }

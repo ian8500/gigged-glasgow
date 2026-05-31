@@ -193,3 +193,31 @@ export type CityTemplate = CityBrand & {
   genre_filters: string[];
   minimum_date_range_days: number;
 };
+
+export type AppSettingField = {
+  key: string;
+  label: string;
+  section: string;
+  secret: boolean;
+  configured: boolean;
+  value: string;
+  source: string;
+  env_name: string | null;
+};
+
+export type AppSettings = {
+  sections: Record<string, AppSettingField[]>;
+  values: Record<string, string>;
+  updated_at: string | null;
+};
+
+export type SourceConfig = {
+  id: number;
+  name: string;
+  kind: string;
+  base_url: string | null;
+  terms_url: string | null;
+  is_enabled: boolean;
+  notes: string | null;
+  created_at: string | null;
+};

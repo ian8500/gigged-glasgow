@@ -1,5 +1,15 @@
-import { checkAllVenues, checkVenueNow, seedVenueCoverage } from "@/app/admin/actions";
+import {
+  checkAllVenues,
+  checkVenueNow,
+  createVenue,
+  editVenue,
+  markVenueManualOnly,
+  markVenueSourceBroken,
+  mergeDuplicateVenues,
+  seedVenueCoverage
+} from "@/app/admin/actions";
 import { AdminPageHeader } from "@/components/admin/AdminSectionNav";
+import { SubmitButton } from "@/components/admin/SubmitButton";
 import { getVenueCoverage } from "@/lib/api";
 
 const statusTone: Record<string, string> = {
@@ -26,14 +36,14 @@ export default async function VenueCoveragePage() {
       <AdminPageHeader eyebrow="Audit" title="Glasgow Venue Coverage">
         <div className="flex flex-wrap gap-3">
           <form action={seedVenueCoverage}>
-            <button className="rounded-md border border-bone/15 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-bone hover:bg-bone/10">
+            <SubmitButton pendingText="Seeding" className="rounded-md border border-bone/15 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-bone hover:bg-bone/10">
               Seed venues
-            </button>
+            </SubmitButton>
           </form>
           <form action={checkAllVenues}>
-            <button className="rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
+            <SubmitButton pendingText="Checking" className="rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
               Check all
-            </button>
+            </SubmitButton>
           </form>
         </div>
       </AdminPageHeader>
@@ -82,6 +92,53 @@ export default async function VenueCoveragePage() {
         </div>
       </section>
 
+      <section className="grid gap-5 lg:grid-cols-[1fr_1fr]">
+        <form action={createVenue} className="rounded-lg border border-bone/10 bg-bone/[0.04] p-6">
+          <h2 className="font-display text-2xl font-black text-bone">Add venue</h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <input name="name" required placeholder="Venue name" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+            <input name="postcode" placeholder="Postcode" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+            <input name="address" placeholder="Address" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone md:col-span-2" />
+            <input name="website_url" placeholder="Official website" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+            <input name="event_listings_url" placeholder="Events page URL" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+            <input name="ticketing_url" placeholder="Ticketing URL" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+            <input name="instagram_handle" placeholder="@instagram" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+            <select name="coverage_status" defaultValue="manual_only" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone">
+              <option value="manual_only">Manual-only</option>
+              <option value="automated">Automated</option>
+              <option value="needs_review">Needs review</option>
+            </select>
+            <textarea name="notes" placeholder="Notes" className="min-h-20 rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone md:col-span-2" />
+          </div>
+          <SubmitButton pendingText="Adding" className="mt-4 rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
+            Add venue
+          </SubmitButton>
+        </form>
+
+        <form action={mergeDuplicateVenues} className="rounded-lg border border-bone/10 bg-bone/[0.04] p-6">
+          <h2 className="font-display text-2xl font-black text-bone">Merge duplicate venues</h2>
+          <div className="mt-4 grid gap-3">
+            <select name="keeperId" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone">
+              {coverage.venues.map((venue) => (
+                <option key={venue.id} value={venue.id}>
+                  Keep {venue.venue_name}
+                </option>
+              ))}
+            </select>
+            <select name="duplicateId" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone">
+              {coverage.venues.map((venue) => (
+                <option key={venue.id} value={venue.id}>
+                  Merge {venue.venue_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <SubmitButton pendingText="Merging" className="mt-4 rounded-md border border-clyde px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-clyde">
+            Merge duplicate venues
+          </SubmitButton>
+        </form>
+      </section>
+
       <section className="rounded-lg border border-bone/10 bg-ink/45">
         <div className="border-b border-bone/10 p-5">
           <h2 className="font-display text-2xl font-black text-bone">Venue audit table</h2>
@@ -91,7 +148,7 @@ export default async function VenueCoveragePage() {
         </div>
         <div className="divide-y divide-bone/10">
           {coverage.venues.map((venue) => (
-            <article key={venue.id} className="grid gap-4 p-5 xl:grid-cols-[1.2fr_1fr_180px]">
+            <article key={venue.id} className="grid gap-4 p-5 xl:grid-cols-[1.1fr_1fr_260px]">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-display text-xl font-black text-bone">{venue.venue_name}</h3>
@@ -127,14 +184,59 @@ export default async function VenueCoveragePage() {
                 ) : null}
               </div>
 
-              <div className="flex items-start justify-start xl:justify-end">
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  {venue.website_url ? (
+                    <a href={venue.website_url} target="_blank" rel="noreferrer" className="rounded-md border border-bone/15 px-3 py-2 text-center text-xs font-black uppercase text-bone/70">
+                      Website
+                    </a>
+                  ) : null}
+                  {venue.event_listings_url ? (
+                    <a href={venue.event_listings_url} target="_blank" rel="noreferrer" className="rounded-md border border-clyde px-3 py-2 text-center text-xs font-black uppercase text-clyde">
+                      Source URL
+                    </a>
+                  ) : null}
+                </div>
                 <form action={checkVenueNow}>
                   <input type="hidden" name="venueId" value={venue.id} />
-                  <button className="rounded-md bg-bone px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink hover:bg-acid">
+                  <SubmitButton pendingText="Checking" className="w-full rounded-md bg-bone px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink hover:bg-acid">
                     Check now
-                  </button>
+                  </SubmitButton>
+                </form>
+                <form action={markVenueManualOnly}>
+                  <input type="hidden" name="venueId" value={venue.id} />
+                  <SubmitButton pendingText="Marking" className="w-full rounded-md border border-acid px-3 py-2 text-xs font-black uppercase text-acid">
+                    Mark manual-only
+                  </SubmitButton>
+                </form>
+                <form action={markVenueSourceBroken}>
+                  <input type="hidden" name="venueId" value={venue.id} />
+                  <SubmitButton pendingText="Marking" className="w-full rounded-md border border-poster px-3 py-2 text-xs font-black uppercase text-poster">
+                    Mark source broken
+                  </SubmitButton>
                 </form>
               </div>
+              <form action={editVenue} className="xl:col-span-3 grid gap-3 rounded-md border border-bone/10 bg-bone/[0.03] p-4 md:grid-cols-3">
+                <input type="hidden" name="venueId" value={venue.id} />
+                <input name="name" defaultValue={venue.venue_name} className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <input name="postcode" defaultValue={venue.postcode ?? ""} placeholder="Postcode" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <select name="coverage_status" defaultValue={venue.coverage_status} className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone">
+                  <option value="automated">Automated</option>
+                  <option value="manual_only">Manual-only</option>
+                  <option value="broken">Broken</option>
+                  <option value="needs_review">Needs review</option>
+                  <option value="unsupported">Unsupported</option>
+                </select>
+                <input name="address" defaultValue={venue.address ?? ""} placeholder="Address" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <input name="website_url" defaultValue={venue.website_url ?? ""} placeholder="Website" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <input name="event_listings_url" defaultValue={venue.event_listings_url ?? ""} placeholder="Events page" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <input name="ticketing_url" defaultValue={venue.ticketing_url ?? ""} placeholder="Ticketing" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <input name="instagram_handle" defaultValue={venue.instagram_handle ?? ""} placeholder="@instagram" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <input name="notes" defaultValue={venue.notes ?? ""} placeholder="Notes" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <SubmitButton pendingText="Saving" className="rounded-md border border-clyde px-3 py-2 text-sm font-black uppercase text-clyde md:col-span-3">
+                  Edit venue
+                </SubmitButton>
+              </form>
             </article>
           ))}
         </div>

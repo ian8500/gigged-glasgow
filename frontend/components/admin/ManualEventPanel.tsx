@@ -1,4 +1,5 @@
 import { addManualEvent, uploadCsv } from "@/app/admin/actions";
+import { SubmitButton } from "@/components/admin/SubmitButton";
 import type { Venue } from "@/lib/types";
 
 export function ManualEventPanel({ venues }: { venues: Venue[] }) {
@@ -18,9 +19,9 @@ export function ManualEventPanel({ venues }: { venues: Venue[] }) {
           <input name="starts_at" required type="datetime-local" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
           <input name="ticket_url" placeholder="Ticket link" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
           <input name="genre" placeholder="Genre" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
-          <button className="rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
+          <SubmitButton pendingText="Adding" className="rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
             Add event
-          </button>
+          </SubmitButton>
         </div>
       </form>
       <form action={uploadCsv} className="rounded-lg border border-bone/10 bg-bone/[0.04] p-5">
@@ -30,9 +31,9 @@ export function ManualEventPanel({ venues }: { venues: Venue[] }) {
           `ticket_url`, `genre`.
         </p>
         <input name="csv" required type="file" accept=".csv,text/csv" className="mt-5 w-full rounded-md border border-dashed border-bone/20 bg-night px-3 py-8 text-sm text-bone/65" />
-        <button className="mt-4 rounded-md bg-clyde px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
+        <SubmitButton pendingText="Importing" className="mt-4 rounded-md bg-clyde px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
           Import CSV
-        </button>
+        </SubmitButton>
       </form>
     </section>
   );

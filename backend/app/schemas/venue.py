@@ -23,6 +23,23 @@ class VenueCreate(BaseModel):
     is_whitelisted: bool = True
 
 
+class VenueUpdate(BaseModel):
+    name: str | None = None
+    slug: str | None = None
+    address: str | None = None
+    postcode: str | None = None
+    capacity: int | None = None
+    website_url: str | None = None
+    event_listings_url: str | None = None
+    ticketing_url: str | None = None
+    instagram_handle: str | None = None
+    source_discovered_from: str | None = None
+    status: str | None = None
+    coverage_status: str | None = None
+    notes: str | None = None
+    is_whitelisted: bool | None = None
+
+
 class VenueRead(BaseModel):
     id: int
     city_id: int

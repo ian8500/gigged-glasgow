@@ -7,7 +7,7 @@ from app.api.router import api_router
 from app.core.settings import settings
 from app.db.schema import create_or_update_local_schema
 from app.db.session import engine
-from app.models import artist, city, city_brand, event, ingestion_log, source, social_post, venue, venue_check_log, venue_coverage, weekly_issue  # noqa: F401
+from app.models import app_setting, artist, city, city_brand, event, ingestion_log, source, social_post, venue, venue_check_log, venue_coverage, weekly_issue  # noqa: F401
 
 
 def create_app() -> FastAPI:
@@ -30,6 +30,7 @@ def create_app() -> FastAPI:
         create_or_update_local_schema(engine)
 
     app.include_router(api_router, prefix="/api/v1")
+    app.include_router(api_router, prefix="/api")
     return app
 
 

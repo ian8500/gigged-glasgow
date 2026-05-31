@@ -20,13 +20,17 @@ class TicketmasterDiscoveryAdapter(EventSourceAdapter):
     base_url = "https://app.ticketmaster.com/discovery/v2/events.json"
     page_size = 200
 
+    def __init__(self, api_key: str | None = None) -> None:
+        self.api_key = api_key
+
     def fetch(self, city: CityConfig, start: datetime, end: datetime) -> SourceFetchResult:
         if city.slug != "glasgow":
             return SourceFetchResult(
                 source_name=self.name,
                 warnings=["Ticketmaster Phase 1 ingestion is restricted to Glasgow."],
             )
-        if not settings.ticketmaster_api_key:
+        api_key = self.api_key or settings.ticketmaster_api_key
+        if not api_key:
             return SourceFetchResult(
                 source_name=self.name,
                 warnings=["TICKETMASTER_API_KEY is not set; Ticketmaster ingestion skipped."],
@@ -39,7 +43,7 @@ class TicketmasterDiscoveryAdapter(EventSourceAdapter):
         total_pages = 1
 
         while page < total_pages:
-            payload, error = self._fetch_page(start, end, page)
+            payload, error = self._fetch_page(start, end, page, api_key)
             if error:
                 failures.append(error)
                 break
@@ -63,15 +67,32 @@ class TicketmasterDiscoveryAdapter(EventSourceAdapter):
             failures=failures,
         )
 
-    def _fetch_page(self, start: datetime, end: datetime, page: int) -> tuple[dict, str | None]:
+    def test_connection(self) -> tuple[bool, str]:
+        api_key = self.api_key or settings.ticketmaster_api_key
+        if not api_key:
+            return False, "Ticketmaster API key is not configured."
+        now = datetime.now(timezone.utc)
+        payload, error = self._fetch_page(now, now, 0, api_key, size=1)
+        if error:
+            return False, error
+        return True, f"Ticketmaster connection succeeded; API returned page metadata {payload.get('page', {})}."
+
+    def _fetch_page(
+        self,
+        start: datetime,
+        end: datetime,
+        page: int,
+        api_key: str,
+        size: int | None = None,
+    ) -> tuple[dict, str | None]:
         params = {
-            "apikey": settings.ticketmaster_api_key,
+            "apikey": api_key,
             "city": "Glasgow",
             "countryCode": "GB",
             "classificationName": "music",
             "startDateTime": _as_ticketmaster_datetime(start),
             "endDateTime": _as_ticketmaster_datetime(end),
-            "size": str(self.page_size),
+            "size": str(size or self.page_size),
             "page": str(page),
             "sort": "date,asc",
             "includeTBA": "no",

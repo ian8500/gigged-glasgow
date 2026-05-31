@@ -7,6 +7,7 @@ const adminItems = [
   ["/admin/weekly", "Weekly builder"],
   ["/admin/social", "Social posts"],
   ["/admin/instagram", "Instagram"],
+  ["/admin/settings", "Settings"],
   ["/admin/brand-settings", "Brand"],
   ["/admin/city-settings", "City"],
   ["/admin/source-settings", "Sources"]

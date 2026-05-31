@@ -1,5 +1,6 @@
 import { createCityBrand } from "@/app/admin/actions";
 import { AdminPageHeader } from "@/components/admin/AdminSectionNav";
+import { SubmitButton } from "@/components/admin/SubmitButton";
 import { getCityBrands, getCityTemplates } from "@/lib/api";
 
 export default async function CitySettingsPage() {
@@ -78,12 +79,13 @@ export default async function CitySettingsPage() {
                 </p>
                 <form action={createCityBrand} className="mt-5">
                   <input type="hidden" name="templateSlug" value={template.slug} />
-                  <button
+                  <SubmitButton
+                    pendingText="Creating"
                     disabled={createdSlugs.has(template.slug)}
                     className="w-full rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink disabled:cursor-not-allowed disabled:bg-bone/15 disabled:text-bone/35"
                   >
                     {createdSlugs.has(template.slug) ? "Created" : `Create ${template.brand_name}`}
-                  </button>
+                  </SubmitButton>
                 </form>
               </article>
             ))}

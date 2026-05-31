@@ -10,9 +10,17 @@ class Settings(BaseSettings):
     backend_cors_origins: str = "http://localhost:3000"
     admin_api_key: str = "change-me-in-production"
     ticketmaster_api_key: str | None = None
+    eventbrite_api_key: str | None = None
+    songkick_api_key: str | None = None
+    bandsintown_app_id: str | None = None
+    skiddle_source_settings: str | None = None
+    gigs_in_scotland_source_settings: str | None = None
+    whats_on_glasgow_source_settings: str | None = None
     manual_events_csv_path: str | None = "seeds/manual_events.csv"
+    instagram_handle: str | None = None
     meta_app_id: str | None = None
     meta_app_secret: str | None = None
+    facebook_page_id: str | None = None
     meta_access_token: str | None = None
     instagram_business_account_id: str | None = None
     meta_graph_api_version: str = "v20.0"

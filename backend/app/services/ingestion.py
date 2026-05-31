@@ -21,6 +21,7 @@ from app.services.normalization import (
     event_slug,
     needs_review,
 )
+from app.services.app_settings import get_raw_setting
 from app.services.seed import seed_glasgow
 from app.sources.base import EventSourceAdapter, NormalizedSourceEvent
 from app.sources.registry import get_default_adapters
@@ -55,10 +56,14 @@ def ingest_city(
         raise ValueError(f"City '{city_slug}' has not been seeded.")
 
     start = datetime.now(timezone.utc)
-    end = start + timedelta(days=30)
+    try:
+        date_range_days = int(get_raw_setting(db, "date_range_days") or 30)
+    except ValueError:
+        date_range_days = 30
+    end = start + timedelta(days=max(1, min(date_range_days, 180)))
     report = IngestionReport(city=city_slug)
 
-    for adapter in adapters or get_default_adapters():
+    for adapter in adapters or default_adapters_for_db(db):
         source = ensure_source(db, adapter.name, adapter.kind)
         log = IngestionLog(
             city_id=city.id,
@@ -205,7 +210,11 @@ def upsert_event(
 def ensure_source(db: Session, name: str, kind: str) -> Source:
     source = db.scalar(select(Source).where(Source.name == name))
     if source is None:
-        source = Source(name=name, kind=kind, is_enabled=True)
+        source = Source(
+            name=name,
+            kind=kind,
+            is_enabled=name not in {"Eventbrite", "Bandsintown", "Songkick", "Public venue pages"},
+        )
         db.add(source)
         db.flush()
     return source
@@ -246,6 +255,21 @@ def get_city_config(city_slug: str):
     from app.cities.registry import get_city_config as registry_get_city_config
 
     return registry_get_city_config(city_slug)
+
+
+def default_adapters_for_db(db: Session) -> list[EventSourceAdapter]:
+    adapters = get_default_adapters()
+    ticketmaster_key = get_raw_setting(db, "ticketmaster_api_key")
+    if ticketmaster_key:
+        from app.sources.ticketmaster import TicketmasterDiscoveryAdapter
+
+        adapters = [
+            TicketmasterDiscoveryAdapter(api_key=ticketmaster_key)
+            if adapter.name == TicketmasterDiscoveryAdapter.name
+            else adapter
+            for adapter in adapters
+        ]
+    return adapters
 
 
 def ingestion_log_payload(log: IngestionLog) -> dict:

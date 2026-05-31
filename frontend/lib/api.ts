@@ -1,11 +1,13 @@
 import type {
   AdminEvent,
+  AppSettings,
   CityBrand,
   CityTemplate,
   DashboardSummary,
   Event,
   InstagramSettings,
   SocialPost,
+  SourceConfig,
   Venue,
   VenueCoverage
 } from "@/lib/types";
@@ -35,7 +37,7 @@ async function apiGet<T>(path: string, init?: RequestInit): Promise<T | null> {
 }
 
 export async function getDashboard(): Promise<DashboardSummary> {
-  const data = await apiGet<DashboardSummary>("/admin/dashboard", {
+  const data = await apiGet<DashboardSummary>("/dashboard/summary?city=glasgow", {
     headers: { "X-Admin-Token": ADMIN_API_KEY }
   });
 
@@ -91,8 +93,9 @@ export async function getEvents(): Promise<Event[]> {
 }
 
 export async function getSocialReviewQueue(status = "review"): Promise<SocialPost[]> {
+  const apiStatus = status === "review" ? "needs_review" : status;
   return (
-    (await apiGet<SocialPost[]>(`/admin/social/review-queue?city=glasgow&status=${status}`, {
+    (await apiGet<SocialPost[]>(`/social/posts?city=glasgow&status=${apiStatus}`, {
       headers: { "X-Admin-Token": ADMIN_API_KEY }
     })) ?? []
   );
@@ -122,6 +125,22 @@ export async function getInstagramSettings(): Promise<InstagramSettings> {
       account_type: "Instagram Business or Creator account connected to a Facebook Page",
       safe_fallback: "Export PNG plus caption and post manually."
     }
+  );
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+  return (
+    (await apiGet<AppSettings>("/settings", {
+      headers: { "X-Admin-Token": ADMIN_API_KEY }
+    })) ?? { sections: {}, values: {}, updated_at: null }
+  );
+}
+
+export async function getSources(): Promise<SourceConfig[]> {
+  return (
+    (await apiGet<SourceConfig[]>("/sources", {
+      headers: { "X-Admin-Token": ADMIN_API_KEY }
+    })) ?? []
   );
 }
 

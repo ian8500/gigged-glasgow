@@ -100,7 +100,7 @@ def test_glasgow_venue_coverage_seed_contains_requested_venues() -> None:
     venues = json.loads(seed_path.read_text(encoding="utf-8"))
     names = {venue["name"] for venue in venues}
 
-    assert len(venues) == 31
+    assert len(venues) == 45
     assert {
         "Barrowland Ballroom",
         "King Tut's Wah Wah Hut",
@@ -133,6 +133,20 @@ def test_glasgow_venue_coverage_seed_contains_requested_venues() -> None:
         "Kelvingrove Bandstand",
         "Bellahouston Park",
         "Hampden Park",
+        "The Blue Arrow",
+        "The Admiral",
+        "The Flying Duck",
+        "Bloc+",
+        "The 13th Note",
+        "The Poetry Club",
+        "Cottiers",
+        "Mackintosh Queen's Cross",
+        "The Stand Glasgow",
+        "The Old Fruitmarket",
+        "City Halls",
+        "Òran Mór Auditorium",
+        "Websters Theatre",
+        "Òran Mór Whisky Bar",
     } == names
 
 

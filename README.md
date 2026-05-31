@@ -190,9 +190,22 @@ Set API keys in `backend/.env`:
 ```dotenv
 ADMIN_API_KEY=change-me-in-production
 TICKETMASTER_API_KEY=your-ticketmaster-discovery-api-key
+EVENTBRITE_API_KEY=
+SONGKICK_API_KEY=
+BANDSINTOWN_APP_ID=
 MANUAL_EVENTS_CSV_PATH=seeds/manual_events.csv
+INSTAGRAM_HANDLE=@giggedglasgow
+META_APP_ID=
+META_APP_SECRET=
+FACEBOOK_PAGE_ID=
+INSTAGRAM_BUSINESS_ACCOUNT_ID=
+META_ACCESS_TOKEN=
 ```
 
+You can also enter keys and publishing details in the frontend Settings screen
+at `/settings` or `/admin/settings`. Saved secrets are stored server-side and
+are only returned to the frontend as masked values such as `tm-t••••1234`.
+Runtime lookup uses the saved Settings value first and `backend/.env` second.
 `TICKETMASTER_API_KEY` is optional for local smoke tests, but Ticketmaster
 ingestion will be skipped until it is set. Get a key from Ticketmaster
 Developer and use the official Discovery API product.
@@ -200,10 +213,49 @@ Developer and use the official Discovery API product.
 Useful endpoints:
 
 - `GET /api/v1/health`
+- `GET /api/v1/dashboard/summary?city=glasgow`
+- `GET /api/v1/dashboard/activity?city=glasgow`
 - `GET /api/v1/cities`
 - `GET /api/v1/cities/config/glasgow`
 - `GET /api/v1/venues?city=glasgow`
+- `POST /api/v1/venues` with `X-Admin-Token`
+- `GET /api/v1/venues/{venue_id}`
+- `PATCH /api/v1/venues/{venue_id}` with `X-Admin-Token`
+- `DELETE /api/v1/venues/{venue_id}` with `X-Admin-Token`
+- `POST /api/v1/venues/{venue_id}/check` with `X-Admin-Token`
+- `POST /api/v1/venues/bulk-check?city=glasgow` with `X-Admin-Token`
 - `GET /api/v1/events?city=glasgow`
+- `POST /api/v1/events` with `X-Admin-Token`
+- `GET /api/v1/events/{event_id}`
+- `PATCH /api/v1/events/{event_id}` with `X-Admin-Token`
+- `DELETE /api/v1/events/{event_id}` with `X-Admin-Token`
+- `POST /api/v1/events/{event_id}/approve` with `X-Admin-Token`
+- `POST /api/v1/events/{event_id}/reject` with `X-Admin-Token`
+- `POST /api/v1/events/{event_id}/mark-top-pick` with `X-Admin-Token`
+- `POST /api/v1/events/dedupe?city=glasgow` with `X-Admin-Token`
+- `POST /api/v1/ingest/ticketmaster?city=glasgow` with `X-Admin-Token`
+- `POST /api/v1/ingest/all?city=glasgow` with `X-Admin-Token`
+- `GET /api/v1/ingest/logs?city=glasgow` with `X-Admin-Token`
+- `GET /api/v1/sources`
+- `PATCH /api/v1/sources/{source_id}` with `X-Admin-Token`
+- `POST /api/v1/weekly/run?city=glasgow` with `X-Admin-Token`
+- `GET /api/v1/weekly/issues?city=glasgow` with `X-Admin-Token`
+- `GET /api/v1/weekly/issues/{issue_id}` with `X-Admin-Token`
+- `PATCH /api/v1/weekly/issues/{issue_id}` with `X-Admin-Token`
+- `POST /api/v1/weekly/issues/{issue_id}/generate-posts` with `X-Admin-Token`
+- `GET /api/v1/social/posts?city=glasgow` with `X-Admin-Token`
+- `POST /api/v1/social/posts` with `X-Admin-Token`
+- `PATCH /api/v1/social/posts/{post_id}` with `X-Admin-Token`
+- `POST /api/v1/social/posts/{post_id}/approve` with `X-Admin-Token`
+- `POST /api/v1/social/posts/{post_id}/reject` with `X-Admin-Token`
+- `POST /api/v1/social/posts/{post_id}/regenerate` with `X-Admin-Token`
+- `POST /api/v1/social/posts/{post_id}/export` with `X-Admin-Token`
+- `POST /api/v1/social/posts/{post_id}/mark-posted` with `X-Admin-Token`
+- `GET /api/v1/settings` with `X-Admin-Token`
+- `PATCH /api/v1/settings` with `X-Admin-Token`
+- `POST /api/v1/settings/test-ticketmaster` with `X-Admin-Token`
+- `POST /api/v1/settings/test-instagram` with `X-Admin-Token`
+- `POST /api/v1/settings/test-all` with `X-Admin-Token`
 - `GET /api/v1/admin/dashboard` with `X-Admin-Token`
 - `POST /api/v1/admin/seed/glasgow` with `X-Admin-Token`
 - `GET /api/v1/admin/venue-coverage?city=glasgow` with `X-Admin-Token`
@@ -236,7 +288,7 @@ python manage.py weekly-run --city glasgow
 `ingest` runs all registered source adapters. Ticketmaster uses the official
 Discovery API when `TICKETMASTER_API_KEY` is configured. Manual CSV import reads
 `MANUAL_EVENTS_CSV_PATH`, which defaults to `seeds/manual_events.csv` when
-running from `backend`. Bandsintown, Songkick, and public venue pages are
+running from `backend`. Eventbrite, Bandsintown, Songkick, and public venue pages are
 explicit placeholders until official credentials, robots.txt, and terms checks
 are completed.
 
@@ -327,6 +379,7 @@ Admin dashboard pages:
 - `/admin/weekly` builds the weekly issue and previews the Instagram carousel direction.
 - `/admin/social` generates and reviews Instagram drafts.
 - `/admin/instagram` prepares account settings for official Meta publishing and manual export fallback.
+- `/admin/settings` stores API keys, source details, search defaults, Meta publishing details, and brand defaults.
 - `/admin/brand-settings` shows the brand system inside the admin area.
 - `/admin/city-settings` shows Glasgow settings and the later-city selector model.
 - `/admin/source-settings` shows configured and placeholder ingestion sources.
@@ -346,6 +399,7 @@ npm run dev
 ```
 
 The dashboard will be available at `http://localhost:3000`.
+The Settings screen is available at `http://localhost:3000/settings`.
 
 Frontend environment:
 
@@ -366,6 +420,39 @@ uvicorn app.main:app --reload
 cd frontend
 npm run dev
 ```
+
+Verification:
+
+```bash
+npm run typecheck
+npm run test:buttons
+```
+
+`npm run test:buttons` is a lightweight frontend smoke test that fails on
+placeholder links, console-only interactions, and raw buttons that are not owned
+by a form or explicit click handler.
+
+## Automation Boundaries And Limitations
+
+Automated now:
+
+- Ticketmaster Discovery API ingestion for Glasgow music events.
+- Manual event entry and CSV import.
+- Venue coverage seeding, per-venue checks, bulk checks, broken/manual-only status tracking, and coverage scoring.
+- Weekly Run orchestration: enabled source ingest, venue coverage, dedupe, scoring, issue creation, and draft social post generation.
+- Local Instagram export assets, captions, hashtags, alt text, scheduling JSON, copy buttons, and manual posted status.
+
+Manual-only or intentionally disabled:
+
+- Eventbrite, Songkick, Bandsintown, Skiddle, Gigs in Scotland, and What's On Glasgow ingestion are settings-ready but not implemented as live adapters.
+- Venue websites are checked only through safe public, robots-aware page checks. No login, paywall, CAPTCHA, anti-bot bypass, private API, or Instagram scraping is allowed.
+- Instagram publishing is manual by default. Official Meta API publishing is prepared at the settings/readiness level but not enabled for automatic posting.
+
+Known limitations:
+
+- Coverage cannot guarantee every gig on the internet; the dashboard reports tracked, automated, manual-only, stale, broken, and missing-source venues so gaps are visible.
+- Ticketmaster coverage depends on the official API and configured date range.
+- Local SQLite secret storage is development-oriented and should be replaced with managed secret storage before production deployment.
 
 ## File Guide
 

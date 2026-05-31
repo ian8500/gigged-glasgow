@@ -5,7 +5,8 @@ const navItems = [
   { href: "/admin", label: "Admin" },
   { href: "/brand", label: "Brand" },
   { href: "/events", label: "Events" },
-  { href: "/venues", label: "Venues" }
+  { href: "/venues", label: "Venues" },
+  { href: "/settings", label: "Settings" }
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {

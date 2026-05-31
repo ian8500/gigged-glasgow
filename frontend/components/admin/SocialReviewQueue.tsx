@@ -1,11 +1,18 @@
+"use client";
+
+import { useState } from "react";
+
 import {
   approveSocialPost,
   editSocialPost,
+  exportSocialPost,
   generateSocialPosts,
+  markSocialPostPosted,
   regenerateSocialPost,
   rejectSocialPost,
   scheduleSocialPost
 } from "@/app/admin/actions";
+import { SubmitButton } from "@/components/admin/SubmitButton";
 import type { SocialPost } from "@/lib/types";
 
 export function SocialReviewQueue({ posts }: { posts: SocialPost[] }) {
@@ -25,9 +32,9 @@ export function SocialReviewQueue({ posts }: { posts: SocialPost[] }) {
           </p>
         </div>
         <form action={generateSocialPosts}>
-          <button className="rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
+          <SubmitButton pendingText="Generating" className="rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
             Generate drafts
-          </button>
+          </SubmitButton>
         </form>
       </div>
 
@@ -111,41 +118,60 @@ function ReviewCard({ post }: { post: SocialPost }) {
             className="h-36 w-full rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone"
             aria-label="Post caption"
           />
-          <button className="w-full rounded-md border border-clyde px-3 py-2 text-sm font-black uppercase tracking-[0.14em] text-clyde">
+          <SubmitButton pendingText="Saving" className="w-full rounded-md border border-clyde px-3 py-2 text-sm font-black uppercase tracking-[0.14em] text-clyde">
             Save edits
-          </button>
+          </SubmitButton>
         </form>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
           <form action={approveSocialPost}>
             <input type="hidden" name="postId" value={post.id} />
-            <button className="w-full rounded-md bg-acid px-3 py-2 text-xs font-black uppercase text-ink">
+            <SubmitButton pendingText="Approving" className="w-full rounded-md bg-acid px-3 py-2 text-xs font-black uppercase text-ink">
               Approve
-            </button>
+            </SubmitButton>
           </form>
           {post.status === "approved" ? (
             <form action={scheduleSocialPost}>
               <input type="hidden" name="postId" value={post.id} />
-              <button className="w-full rounded-md bg-clyde px-3 py-2 text-xs font-black uppercase text-ink">
+              <SubmitButton pendingText="Scheduling" className="w-full rounded-md bg-clyde px-3 py-2 text-xs font-black uppercase text-ink">
                 Schedule
-              </button>
+              </SubmitButton>
             </form>
           ) : (
-            <div className="rounded-md bg-bone/10 px-3 py-2 text-center text-xs font-black uppercase text-bone/35">
+            <div className="rounded-md bg-bone/10 px-3 py-2 text-center text-xs font-black uppercase text-bone/35" title="Approve the post before scheduling.">
               Schedule
             </div>
           )}
           <form action={regenerateSocialPost}>
             <input type="hidden" name="postId" value={post.id} />
-            <button className="w-full rounded-md bg-plum px-3 py-2 text-xs font-black uppercase text-bone">
+            <SubmitButton pendingText="Regenerating" className="w-full rounded-md bg-plum px-3 py-2 text-xs font-black uppercase text-bone">
               Regen
-            </button>
+            </SubmitButton>
           </form>
           <form action={rejectSocialPost}>
             <input type="hidden" name="postId" value={post.id} />
-            <button className="w-full rounded-md bg-poster px-3 py-2 text-xs font-black uppercase text-bone">
+            <SubmitButton pendingText="Rejecting" className="w-full rounded-md bg-poster px-3 py-2 text-xs font-black uppercase text-bone">
               Reject
-            </button>
+            </SubmitButton>
           </form>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <form action={exportSocialPost}>
+            <input type="hidden" name="postId" value={post.id} />
+            <SubmitButton pendingText="Exporting" className="w-full rounded-md border border-acid px-3 py-2 text-xs font-black uppercase text-acid">
+              Export
+            </SubmitButton>
+          </form>
+          <form action={markSocialPostPosted}>
+            <input type="hidden" name="postId" value={post.id} />
+            <SubmitButton pendingText="Marking" className="w-full rounded-md border border-bone/20 px-3 py-2 text-xs font-black uppercase text-bone/70">
+              Mark posted
+            </SubmitButton>
+          </form>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <CopyButton label="Copy caption" value={post.caption ?? ""} />
+          <CopyButton label="Copy hashtags" value={(payload.hashtags ?? []).join(" ")} />
+          <CopyButton label="Copy alt" value={String(payload.alt_text ?? "")} />
         </div>
         <div className="rounded-md border border-bone/10 bg-bone/[0.03] p-3 text-xs leading-5 text-bone/55">
           Manual fallback: use exported PNGs, caption, hashtags and alt text. Official Meta
@@ -153,5 +179,23 @@ function ReviewCard({ post }: { post: SocialPost }) {
         </div>
       </div>
     </article>
+  );
+}
+
+function CopyButton({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={!value}
+      onClick={async () => {
+        await navigator.clipboard.writeText(value);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1800);
+      }}
+      className="rounded-md border border-bone/15 px-2 py-2 text-xs font-black uppercase text-bone/65 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {copied ? "Copied" : label}
+    </button>
   );
 }
