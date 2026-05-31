@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "gigged-glasgow-backend"
 version = "0.1.0"
@@ -6,12 +10,16 @@ requires-python = ">=3.11"
 dependencies = [
   "alembic>=1.13.1",
   "fastapi>=0.111.0",
-  "uvicorn[standard]>=0.30.0",
-  "sqlalchemy>=2.0.30",
+  "pydantic>=2.7.0",
   "pydantic-settings>=2.3.0",
-  "python-slugify>=8.0.4",
   "python-dateutil>=2.9.0",
-  "pillow>=10.3.0"
+  "python-dotenv>=1.0.1",
+  "python-slugify>=8.0.4",
+  "pillow>=10.3.0",
+  "rich>=13.7.1",
+  "sqlalchemy>=2.0.30",
+  "typer>=0.12.3",
+  "uvicorn[standard]>=0.30.0"
 ]
 
 [project.optional-dependencies]
@@ -27,3 +35,7 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["alembic*", "exports*", "seeds*"]
