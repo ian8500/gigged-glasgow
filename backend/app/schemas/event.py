@@ -21,11 +21,15 @@ class EventCreate(BaseModel):
 class EventAdminEdit(BaseModel):
     title: str | None = None
     starts_at: datetime | None = None
+    venue_slug: str | None = None
     ticket_url: str | None = None
+    image_url: str | None = None
     genre: str | None = None
     editorial_note: str | None = None
     price_min: Decimal | None = None
     price_max: Decimal | None = None
+    featured: bool | None = None
+    instagram_suitable: bool | None = None
 
 
 class EventCsvImport(BaseModel):
@@ -51,6 +55,10 @@ class EventRead(BaseModel):
     confidence_score: float
     source_attribution: str
     needs_review: bool
+    featured: bool
+    instagram_suitable: bool
+    duplicate_of_event_id: int | None
+    duplicate_reason: str | None
     venue: VenueRead | None = None
 
     model_config = ConfigDict(from_attributes=True)

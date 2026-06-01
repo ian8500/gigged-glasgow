@@ -37,10 +37,15 @@ def create_post(payload: dict, db: Session = Depends(get_db)) -> SocialPost:
         event_id=payload.get("event_id"),
         platform=payload.get("platform") or "instagram",
         template_name=payload.get("template_name") or "manual",
+        post_type=payload.get("post_type") or payload.get("template_name") or "single_gig",
         caption=payload.get("caption"),
+        image_path=payload.get("image_path"),
+        image_url=payload.get("image_url"),
         image_prompt=payload.get("image_prompt"),
         preview_payload=payload.get("preview_payload") or {},
         status=payload.get("status") or "draft",
+        publish_at=payload.get("publish_at"),
+        planned_for=payload.get("publish_at") or payload.get("planned_for"),
     )
     db.add(post)
     db.commit()

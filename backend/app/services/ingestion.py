@@ -1,20 +1,24 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Literal
 
 from slugify import slugify
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.models.artist import Artist
 from app.models.city import City
 from app.models.event import Event
 from app.models.ingestion_log import IngestionLog
+from app.models.ingestion_run import IngestionRun
+from app.models.raw_event import RawEvent
 from app.models.source import Source
 from app.models.venue import Venue
 from app.services.normalization import (
+    clean_name,
     confidence_score,
     ensure_aware,
     event_fingerprint,
@@ -40,7 +44,7 @@ class IngestionReport:
     source_logs: list[dict] = field(default_factory=list)
 
 
-UpsertOutcome = Literal["created", "updated", "skipped"]
+UpsertOutcome = Literal["created", "updated", "skipped", "duplicate"]
 
 
 def ingest_city(
@@ -82,11 +86,22 @@ def ingest_city(
             started_at=datetime.utcnow(),
         )
         db.add(log)
+        run = IngestionRun(
+            city_id=city.id,
+            source_id=source.id,
+            source_name=adapter.name,
+            city_slug=city_slug,
+            status="running",
+            warnings=[],
+            started_at=log.started_at,
+        )
+        db.add(run)
         db.flush()
         if not source.is_enabled:
             warning = f"{adapter.name} source is disabled; ingestion skipped."
             log.warnings = [warning]
             log.finished_at = datetime.utcnow()
+            finish_ingestion_run(run, status="skipped", warnings=[warning])
             report.warnings.append(warning)
             report.source_logs.append(ingestion_log_payload(log))
             record_source_ingest(db, source, None, configured, 0, [warning], 0)
@@ -95,6 +110,7 @@ def ingest_city(
             warning = f"{adapter.name} is a placeholder source; ingestion skipped."
             log.warnings = [warning]
             log.finished_at = datetime.utcnow()
+            finish_ingestion_run(run, status="skipped", warnings=[warning])
             report.warnings.append(warning)
             report.source_logs.append(ingestion_log_payload(log))
             record_source_ingest(db, source, None, configured, 0, [warning], 0)
@@ -103,6 +119,7 @@ def ingest_city(
             warning = f"{adapter.name} source is not configured; ingestion skipped."
             log.warnings = [warning]
             log.finished_at = datetime.utcnow()
+            finish_ingestion_run(run, status="skipped", warnings=[warning])
             report.warnings.append(warning)
             report.source_logs.append(ingestion_log_payload(log))
             record_source_ingest(db, source, None, configured, 0, [warning], 0)
@@ -117,6 +134,7 @@ def ingest_city(
             report.failures += 1
             report.warnings.extend(log.warnings)
             log.finished_at = datetime.utcnow()
+            finish_ingestion_run(run, status="failed", failures=1, warnings=log.warnings)
             record_source_ingest(db, source, result, configured, 1, log.warnings, 0)
             continue
 
@@ -129,34 +147,50 @@ def ingest_city(
         log.events_found = len(result.events)
         log.failures = len(result.failures)
         log.warnings = result.warnings + result.failures
+        run.events_fetched = len(result.events)
+        run.failures = len(result.failures)
+        run.warnings = log.warnings
 
         for source_event in result.events:
             source_event.starts_at = ensure_aware(source_event.starts_at)
+            raw_event = store_raw_event(db, city, source, run, log, source_event)
+            run.raw_events_stored += 1
             fingerprint = event_fingerprint(city.slug, source_event)
             if source_event.source_event_id and source_event.source_event_id in seen_source_ids:
+                mark_raw_duplicate(raw_event, "Duplicate source_event_id inside the same ingestion result.")
                 report.skipped += 1
                 log.duplicates_skipped += 1
+                run.duplicates_marked += 1
                 continue
             if fingerprint in seen_fingerprints:
+                mark_raw_duplicate(raw_event, "Duplicate fingerprint inside the same ingestion result.")
                 report.skipped += 1
                 log.duplicates_skipped += 1
+                run.duplicates_marked += 1
                 continue
             if source_event.source_event_id:
                 seen_source_ids.add(source_event.source_event_id)
             seen_fingerprints.add(fingerprint)
 
-            outcome = upsert_event(db, city, config.venue_whitelist, source, source_event)
+            outcome = upsert_event(db, city, config.venue_whitelist, source, source_event, raw_event)
             if outcome == "skipped":
                 report.skipped += 1
                 log.duplicates_skipped += 1
+            elif outcome == "duplicate":
+                report.skipped += 1
+                log.duplicates_skipped += 1
+                run.duplicates_marked += 1
             elif outcome == "created":
                 report.created += 1
                 log.events_created += 1
+                run.events_created += 1
             else:
                 report.updated += 1
                 log.events_updated += 1
+                run.events_updated += 1
 
         log.finished_at = datetime.utcnow()
+        finish_ingestion_run(run, status="completed" if not result.failures else "completed_with_warnings")
         report.source_logs.append(ingestion_log_payload(log))
         record_source_ingest(
             db,
@@ -178,6 +212,7 @@ def upsert_event(
     venue_whitelist: list[str],
     source: Source,
     source_event: NormalizedSourceEvent,
+    raw_event: RawEvent | None = None,
 ) -> UpsertOutcome:
     source_event.starts_at = ensure_aware(source_event.starts_at)
     fingerprint = event_fingerprint(city.slug, source_event)
@@ -195,9 +230,27 @@ def upsert_event(
         select(Event).where(Event.city_id == city.id, Event.normalized_fingerprint == fingerprint)
     )
     if event is not None and fingerprint_match is not None and event.id != fingerprint_match.id:
-        return "skipped"
+        mark_event_duplicate_review(
+            fingerprint_match,
+            f"Conflicting source id {source_event.source_event_id or 'unknown'} matched this fingerprint.",
+        )
+        mark_event_duplicate_review(event, f"Conflicts with event {fingerprint_match.id}.")
+        if raw_event:
+            raw_event.status = "duplicate_review"
+            raw_event.duplicate_of_event_id = fingerprint_match.id
+            raw_event.review_reason = "Conflicting source id matched an existing normalised fingerprint."
+        return "duplicate"
     if event is None:
-        event = fingerprint_match
+        if fingerprint_match is not None:
+            mark_event_duplicate_review(
+                fingerprint_match,
+                f"{source.name} returned a likely duplicate; raw event kept for review.",
+            )
+            if raw_event:
+                raw_event.status = "duplicate_review"
+                raw_event.duplicate_of_event_id = fingerprint_match.id
+                raw_event.review_reason = "Likely duplicate by artist/title, venue, and date."
+            return "duplicate"
 
     venue = find_or_create_venue(db, city, venue_whitelist, source_event.venue_name)
     if source_event.venue_address and not venue.address:
@@ -210,6 +263,7 @@ def upsert_event(
         venue.longitude = source_event.longitude
     artist = find_or_create_artist(db, source_event.artist_name or source_event.title)
     score = confidence_score(source_event, venue.is_whitelisted)
+    likely_duplicate = None if event is not None else find_likely_duplicate(db, city, venue, artist, source_event)
 
     created = event is None
     if event is None:
@@ -221,6 +275,7 @@ def upsert_event(
             starts_at=source_event.starts_at,
         )
         db.add(event)
+        db.flush()
 
     event.venue_id = venue.id
     event.artist_id = artist.id
@@ -247,7 +302,126 @@ def upsert_event(
     event.source_attribution = source_event.source_attribution
     event.needs_review = needs_review(event.confidence_score, venue.is_whitelisted)
     event.raw_payload = source_event.raw_payload
+    if raw_event:
+        raw_event.event_id = event.id
+        raw_event.status = "normalised"
+    if likely_duplicate is not None:
+        mark_event_duplicate_review(
+            event,
+            f"Likely duplicate of event {likely_duplicate.id}: same/similar artist-title, venue, date, and time.",
+            duplicate_of_event_id=likely_duplicate.id,
+        )
+        if raw_event:
+            raw_event.status = "duplicate_review"
+            raw_event.duplicate_of_event_id = likely_duplicate.id
+            raw_event.review_reason = event.duplicate_reason
+        return "duplicate"
     return "created" if created else "updated"
+
+
+def store_raw_event(
+    db: Session,
+    city: City,
+    source: Source,
+    run: IngestionRun,
+    log: IngestionLog,
+    source_event: NormalizedSourceEvent,
+) -> RawEvent:
+    raw_event = RawEvent(
+        ingestion_run_id=run.id,
+        ingestion_log_id=log.id,
+        city_id=city.id,
+        source_id=source.id,
+        city_slug=city.slug,
+        source_name=source.name,
+        source_event_id=source_event.source_event_id,
+        title=source_event.title,
+        venue_name=source_event.venue_name,
+        starts_at=source_event.starts_at,
+        status="fetched",
+        raw_payload=json_safe(source_event.raw_payload or {}),
+        normalized_payload=json_safe(asdict(source_event)),
+    )
+    db.add(raw_event)
+    db.flush()
+    return raw_event
+
+
+def mark_raw_duplicate(raw_event: RawEvent, reason: str) -> None:
+    raw_event.status = "duplicate_review"
+    raw_event.review_reason = reason
+
+
+def mark_event_duplicate_review(
+    event: Event,
+    reason: str,
+    duplicate_of_event_id: int | None = None,
+) -> None:
+    event.needs_review = True
+    if event.status not in {"rejected", "published"}:
+        event.status = "duplicate_review"
+    event.duplicate_reason = reason
+    if duplicate_of_event_id is not None:
+        event.duplicate_of_event_id = duplicate_of_event_id
+
+
+def find_likely_duplicate(
+    db: Session,
+    city: City,
+    venue: Venue,
+    artist: Artist,
+    source_event: NormalizedSourceEvent,
+) -> Event | None:
+    starts_at = ensure_aware(source_event.starts_at)
+    window_start = starts_at - timedelta(minutes=90)
+    window_end = starts_at + timedelta(minutes=90)
+    candidates = db.scalars(
+        select(Event)
+        .where(
+            and_(
+                Event.city_id == city.id,
+                Event.venue_id == venue.id,
+                Event.starts_at >= window_start,
+                Event.starts_at <= window_end,
+                Event.status != "rejected",
+            )
+        )
+        .limit(20)
+    )
+    source_title = clean_name(source_event.title)
+    source_artist = clean_name(source_event.artist_name or source_event.title)
+    for candidate in candidates:
+        candidate_title = clean_name(candidate.title)
+        candidate_artist = clean_name(candidate.artist.name if candidate.artist else candidate.title)
+        if candidate_title == source_title or candidate_artist == source_artist or candidate.artist_id == artist.id:
+            return candidate
+    return None
+
+
+def finish_ingestion_run(
+    run: IngestionRun,
+    status: str,
+    failures: int | None = None,
+    warnings: list[str] | None = None,
+) -> None:
+    run.status = status
+    if failures is not None:
+        run.failures = failures
+    if warnings is not None:
+        run.warnings = warnings
+    run.finished_at = datetime.utcnow()
+
+
+def json_safe(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [json_safe(item) for item in value]
+    return value
 
 
 def ensure_source(db: Session, name: str, kind: str) -> Source:
@@ -338,6 +512,7 @@ def default_adapters_for_db(db: Session) -> list[EventSourceAdapter]:
     eventbrite_key = get_raw_setting(db, "eventbrite_api_key")
     from app.sources.eventbrite import EventbriteAdapter
     from app.sources.bandsintown import BandsintownAdapter
+    from app.sources.skiddle import SkiddleAdapter
     from app.sources.songkick import SongkickAdapter
 
     configured_adapters: list[EventSourceAdapter] = []
@@ -359,6 +534,22 @@ def default_adapters_for_db(db: Session) -> list[EventSourceAdapter]:
                 BandsintownAdapter(
                     app_id=bandsintown_key,
                     artist_seed_list=get_raw_setting(db, "bandsintown_artist_seed_list"),
+                )
+            )
+            continue
+        if adapter.name == SkiddleAdapter.name:
+            source = ensure_source(db, adapter.name, adapter.kind)
+            apply_adapter_metadata(source, adapter)
+            skiddle_key = get_raw_setting(db, "skiddle_api_key")
+            skiddle_city_id = get_raw_setting(db, "skiddle_city_id")
+            skiddle_base_url = get_raw_setting(db, "skiddle_api_base_url")
+            if not source.is_enabled or not skiddle_key or not skiddle_city_id or not skiddle_base_url:
+                continue
+            configured_adapters.append(
+                SkiddleAdapter(
+                    api_key=skiddle_key,
+                    city_id=skiddle_city_id,
+                    api_base_url=skiddle_base_url,
                 )
             )
             continue

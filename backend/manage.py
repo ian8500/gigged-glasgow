@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from app.core.settings import settings
 from app.db.schema import create_or_update_local_schema
 from app.db.session import engine, SessionLocal
-from app.models import artist, city, city_brand, event, extracted_event_candidate, ingestion_log, promoter_submission, scrape_run, source, source_feed, source_health, social_post, venue, venue_check_log, venue_coverage, weekly_issue  # noqa: F401
+from app.models import artist, city, city_brand, event, extracted_event_candidate, ingestion_log, ingestion_run, promoter_submission, raw_event, scrape_run, source, source_feed, source_health, social_post, venue, venue_check_log, venue_coverage, weekly_issue  # noqa: F401
 from app.services.deduplication import dedupe_city
 from app.services.ingestion import ingest_city
 from app.services.seed import seed_glasgow
@@ -44,7 +44,7 @@ def dedupe(city_slug: str) -> None:
         report = dedupe_city(db, city_slug)
     print(
         f"Deduped {report.city}: reviewed={report.reviewed}, merged={report.merged}, "
-        f"updated_fingerprints={report.updated_fingerprints}"
+        f"marked_for_review={report.marked_for_review}, updated_fingerprints={report.updated_fingerprints}"
     )
 
 

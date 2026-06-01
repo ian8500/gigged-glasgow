@@ -1,7 +1,7 @@
 import { EventList } from "@/components/events/EventList";
-import { getAdminEvents } from "@/lib/api";
+import { getEvents } from "@/lib/api";
 
 export default async function EventsPage() {
-  const events = await getAdminEvents("inbox");
+  const events = await getEvents();
   return <EventList events={events} />;
 }

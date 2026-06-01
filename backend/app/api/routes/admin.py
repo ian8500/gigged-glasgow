@@ -253,7 +253,7 @@ def admin_events(
         .options(joinedload(Event.artist), joinedload(Event.venue), joinedload(Event.source))
         .order_by(Event.starts_at.asc())
     )
-    if view == "needs-review":
+    if view in {"needs-review", "pending"}:
         statement = statement.where(Event.needs_review.is_(True))
     elif view == "approved":
         statement = statement.where(Event.needs_review.is_(False), Event.status == "scheduled")
@@ -275,8 +275,15 @@ def edit_event(event_id: int, payload: EventAdminEdit, db: Session = Depends(get
         event.slug = event_slug(payload.title, payload.starts_at or event.starts_at)
     if payload.starts_at is not None:
         event.starts_at = payload.starts_at
+    if payload.venue_slug is not None:
+        venue = db.scalar(select(Venue).where(Venue.city_id == event.city_id, Venue.slug == payload.venue_slug))
+        if venue is None:
+            raise HTTPException(status_code=404, detail="Venue not found")
+        event.venue_id = venue.id
     if payload.ticket_url is not None:
         event.ticket_url = payload.ticket_url
+    if payload.image_url is not None:
+        event.image_url = payload.image_url
     if payload.genre is not None:
         event.genre = payload.genre
     if payload.editorial_note is not None:
@@ -285,6 +292,10 @@ def edit_event(event_id: int, payload: EventAdminEdit, db: Session = Depends(get
         event.price_min = payload.price_min
     if payload.price_max is not None:
         event.price_max = payload.price_max
+    if payload.featured is not None:
+        event.featured = payload.featured
+    if payload.instagram_suitable is not None:
+        event.instagram_suitable = payload.instagram_suitable
     if event.artist and event.venue:
         event.normalized_fingerprint = fingerprint_parts(
             event.city.slug,
@@ -302,6 +313,8 @@ def approve_event(event_id: int, db: Session = Depends(get_db)) -> dict:
     event = require_event(db, event_id)
     event.needs_review = False
     event.status = "scheduled"
+    event.duplicate_of_event_id = None
+    event.duplicate_reason = None
     db.commit()
     db.refresh(event)
     return event_admin_payload(event)
@@ -323,6 +336,28 @@ def mark_top_pick(event_id: int, enabled: bool = True, db: Session = Depends(get
     metadata = dict(event.raw_payload or {})
     metadata["top_pick"] = enabled
     event.raw_payload = metadata
+    event.featured = enabled
+    db.commit()
+    db.refresh(event)
+    return event_admin_payload(event)
+
+
+@router.post("/events/{event_id}/featured")
+def mark_featured(event_id: int, enabled: bool = True, db: Session = Depends(get_db)) -> dict:
+    event = require_event(db, event_id)
+    event.featured = enabled
+    metadata = dict(event.raw_payload or {})
+    metadata["top_pick"] = enabled
+    event.raw_payload = metadata
+    db.commit()
+    db.refresh(event)
+    return event_admin_payload(event)
+
+
+@router.post("/events/{event_id}/instagram-suitable")
+def mark_instagram_suitable(event_id: int, enabled: bool = True, db: Session = Depends(get_db)) -> dict:
+    event = require_event(db, event_id)
+    event.instagram_suitable = enabled
     db.commit()
     db.refresh(event)
     return event_admin_payload(event)
@@ -783,10 +818,14 @@ def social_post_payload(post: SocialPost) -> dict:
         "event_id": post.event_id,
         "platform": post.platform,
         "template_name": post.template_name,
+        "post_type": post.post_type,
         "caption": post.caption,
+        "image_path": post.image_path,
+        "image_url": post.image_url,
         "hashtags": hashtags,
         "alt_text": payload.get("alt_text"),
         "status": post.status,
+        "publish_at": post.publish_at.isoformat() if post.publish_at else None,
         "planned_for": post.planned_for.isoformat() if post.planned_for else None,
         "exported_at": post.exported_at.isoformat() if post.exported_at else None,
         "posted_manually_at": (
@@ -842,6 +881,10 @@ def event_admin_payload(event: Event) -> dict:
         "confidence_score": event.confidence_score,
         "source_attribution": event.source_attribution,
         "editorial_note": event.editorial_note,
-        "top_pick": bool(metadata.get("top_pick")),
+        "top_pick": bool(event.featured or metadata.get("top_pick")),
+        "featured": event.featured,
+        "instagram_suitable": event.instagram_suitable,
+        "duplicate_of_event_id": event.duplicate_of_event_id,
+        "duplicate_reason": event.duplicate_reason,
         "sponsored": bool(metadata.get("sponsored")),
     }

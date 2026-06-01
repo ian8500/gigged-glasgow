@@ -165,10 +165,12 @@ def create_review_post(
         event_id=first_event.id if first_event and generated.format != "weekly_top_10" else None,
         platform="instagram",
         template_name=generated.format,
+        post_type=post_type_for_format(generated.format),
         caption=generated.caption,
         image_prompt=generated.description,
         status="needs_review",
         planned_for=planned_publish_time(generated.format),
+        publish_at=planned_publish_time(generated.format),
         preview_payload={},
     )
     db.add(post)
@@ -186,7 +188,54 @@ def create_review_post(
     json_path = export_scheduling_json(post.id, payload)
     payload["exports"]["json_path"] = str(json_path)
     post.preview_payload = payload
+    post.image_path = str(square_path)
     return post
+
+
+def create_social_draft_for_event(
+    db: Session,
+    event: Event,
+    post_type: str = "single_gig",
+    publish_at: datetime | None = None,
+) -> SocialPost:
+    venue = event.venue.name if event.venue else "Venue TBC"
+    artist = event.artist.name if event.artist else event.title
+    caption = (
+        f"{artist} at {venue}\n"
+        f"{event.starts_at:%a %-d %b, %H:%M}\n\n"
+        "Save this for your next Glasgow gig night.\n\n"
+        "#GiggedGlasgow #GlasgowGigs #GlasgowMusic"
+    )
+    post = SocialPost(
+        city_id=event.city_id,
+        event_id=event.id,
+        platform="instagram",
+        template_name=post_type,
+        post_type=post_type,
+        caption=caption,
+        image_url=event.image_url,
+        status="draft",
+        publish_at=publish_at,
+        planned_for=publish_at,
+        preview_payload={
+            "title": event.title,
+            "description": event.editorial_note,
+            "hashtags": ["#GiggedGlasgow", "#GlasgowGigs", "#GlasgowMusic"],
+            "alt_text": f"Gig listing for {event.title} at {venue}.",
+        },
+    )
+    db.add(post)
+    db.flush()
+    return post
+
+
+def post_type_for_format(post_format: str) -> str:
+    return {
+        "weekly_top_10": "weekend_roundup",
+        "weekend_picks": "weekend_roundup",
+        "cheap_gigs": "cheap_gigs",
+        "hidden_gem": "single_gig",
+    }.get(post_format, "single_gig")
 
 
 def regenerate_post(db: Session, post: SocialPost) -> SocialPost:

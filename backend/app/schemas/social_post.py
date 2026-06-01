@@ -12,13 +12,18 @@ class SocialPostRead(BaseModel):
     event_id: int | None
     platform: str
     template_name: str
+    post_type: str
     caption: str | None
+    image_path: str | None
+    image_url: str | None
     image_prompt: str | None
     preview_payload: dict | None
     status: str
+    publish_at: datetime | None
     planned_for: datetime | None
     exported_at: datetime | None
     posted_manually_at: datetime | None
+    failure_reason: str | None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

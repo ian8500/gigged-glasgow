@@ -15,6 +15,7 @@ class DedupeReport:
     city: str
     reviewed: int = 0
     merged: int = 0
+    marked_for_review: int = 0
     updated_fingerprints: int = 0
 
 
@@ -57,9 +58,14 @@ def dedupe_city(db: Session, city_slug: str) -> DedupeReport:
         for duplicate in duplicate_events:
             if duplicate.id == keeper.id:
                 continue
-            merge_event(keeper, duplicate)
-            db.delete(duplicate)
-            report.merged += 1
+            duplicate.duplicate_of_event_id = keeper.id
+            duplicate.duplicate_reason = (
+                f"Likely duplicate of event {keeper.id}: same artist/title, venue, and date fingerprint."
+            )
+            duplicate.needs_review = True
+            if duplicate.status != "rejected":
+                duplicate.status = "duplicate_review"
+            report.marked_for_review += 1
         db.flush()
         if keeper.normalized_fingerprint != fingerprint:
             keeper.normalized_fingerprint = fingerprint

@@ -42,6 +42,10 @@ EVENT_SQLITE_COLUMNS = {
     "venue_postcode": "VARCHAR(32)",
     "latitude": "FLOAT",
     "longitude": "FLOAT",
+    "duplicate_of_event_id": "INTEGER",
+    "duplicate_reason": "TEXT",
+    "featured": "BOOLEAN DEFAULT 0 NOT NULL",
+    "instagram_suitable": "BOOLEAN DEFAULT 0 NOT NULL",
 }
 
 SOURCE_SQLITE_COLUMNS = {
@@ -57,9 +61,14 @@ SOURCE_SQLITE_COLUMNS = {
 }
 
 SOCIAL_POST_SQLITE_COLUMNS = {
+    "post_type": "VARCHAR(80) DEFAULT 'single_gig' NOT NULL",
+    "image_path": "VARCHAR(600)",
+    "image_url": "VARCHAR(600)",
+    "publish_at": "DATETIME",
     "planned_for": "DATETIME",
     "exported_at": "DATETIME",
     "posted_manually_at": "DATETIME",
+    "failure_reason": "TEXT",
 }
 
 

@@ -81,6 +81,7 @@ def generate_weekly_issue(db: Session, city_slug: str) -> WeeklyReport:
                 weekly_issue_id=issue.id,
                 platform="instagram",
                 template_name="weekly_roundup",
+                post_type="weekend_roundup",
                 caption=build_caption(city.name, starts_on, ends_on, events),
                 image_prompt="Modern gig poster crossed with a useful city guide for Glasgow live music.",
                 preview_payload={

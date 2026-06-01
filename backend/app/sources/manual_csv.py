@@ -24,6 +24,8 @@ class ManualCsvAdapter(SourceAdapterBase):
 
     def __init__(self, csv_path: str | None = None) -> None:
         self.csv_path = csv_path or settings.manual_events_csv_path
+        if not self.csv_path and settings.use_demo_data:
+            self.csv_path = "seeds/manual_events.csv"
 
     def is_configured(self) -> bool:
         return bool(self.csv_path)

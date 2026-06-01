@@ -76,6 +76,7 @@ def dedupe_events(city: str = "glasgow", db: Session = Depends(get_db)) -> dict:
         "city": report.city,
         "reviewed": report.reviewed,
         "merged": report.merged,
+        "marked_for_review": report.marked_for_review,
         "updated_fingerprints": report.updated_fingerprints,
     }
 
@@ -91,7 +92,14 @@ def get_event(event_id: int, db: Session = Depends(get_db)) -> Event:
 @router.patch("/{event_id}", response_model=EventRead, dependencies=[Depends(require_admin)])
 def update_event(event_id: int, payload: EventAdminEdit, db: Session = Depends(get_db)) -> Event:
     event = require_event(db, event_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    values = payload.model_dump(exclude_unset=True)
+    venue_slug = values.pop("venue_slug", None)
+    if venue_slug:
+        venue = db.scalar(select(Venue).where(Venue.city_id == event.city_id, Venue.slug == venue_slug))
+        if venue is None:
+            raise HTTPException(status_code=404, detail="Venue not found")
+        event.venue_id = venue.id
+    for key, value in values.items():
         setattr(event, key, value)
     if payload.title or payload.starts_at:
         event.slug = event_slug(event.title, event.starts_at)
@@ -120,6 +128,8 @@ def approve_event(event_id: int, db: Session = Depends(get_db)) -> Event:
     event = require_event(db, event_id)
     event.needs_review = False
     event.status = "scheduled"
+    event.duplicate_of_event_id = None
+    event.duplicate_reason = None
     db.commit()
     db.refresh(event)
     return event
@@ -141,6 +151,28 @@ def mark_top_pick(event_id: int, enabled: bool = True, db: Session = Depends(get
     metadata = dict(event.raw_payload or {})
     metadata["top_pick"] = enabled
     event.raw_payload = metadata
+    event.featured = enabled
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@router.post("/{event_id}/featured", response_model=EventRead, dependencies=[Depends(require_admin)])
+def mark_featured(event_id: int, enabled: bool = True, db: Session = Depends(get_db)) -> Event:
+    event = require_event(db, event_id)
+    event.featured = enabled
+    metadata = dict(event.raw_payload or {})
+    metadata["top_pick"] = enabled
+    event.raw_payload = metadata
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@router.post("/{event_id}/instagram-suitable", response_model=EventRead, dependencies=[Depends(require_admin)])
+def mark_instagram_suitable(event_id: int, enabled: bool = True, db: Session = Depends(get_db)) -> Event:
+    event = require_event(db, event_id)
+    event.instagram_suitable = enabled
     db.commit()
     db.refresh(event)
     return event

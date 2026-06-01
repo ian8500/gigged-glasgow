@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./gigged_glasgow.db"
     backend_cors_origins: str = "http://localhost:3000"
     admin_api_key: str = "change-me-in-production"
+    use_demo_data: bool = False
     ticketmaster_api_key: str | None = None
     eventbrite_api_key: str | None = None
     songkick_api_key: str | None = None
@@ -16,10 +17,13 @@ class Settings(BaseSettings):
     songkick_metro_area_id: str | None = None
     bandsintown_app_id: str | None = None
     bandsintown_artist_seed_list: str | None = None
+    skiddle_api_key: str | None = None
+    skiddle_city_id: str | None = None
+    skiddle_api_base_url: str | None = None
     skiddle_source_settings: str | None = None
     gigs_in_scotland_source_settings: str | None = None
     whats_on_glasgow_source_settings: str | None = None
-    manual_events_csv_path: str | None = "seeds/manual_events.csv"
+    manual_events_csv_path: str | None = None
     instagram_handle: str | None = None
     meta_app_id: str | None = None
     meta_app_secret: str | None = None

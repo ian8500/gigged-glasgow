@@ -30,6 +30,7 @@ class Event(Base):
     venue_id: Mapped[int | None] = mapped_column(ForeignKey("venues.id"), index=True)
     artist_id: Mapped[int | None] = mapped_column(ForeignKey("artists.id"), index=True)
     source_id: Mapped[int | None] = mapped_column(ForeignKey("sources.id"), index=True)
+    duplicate_of_event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id"), index=True)
     title: Mapped[str] = mapped_column(String(240), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     slug: Mapped[str] = mapped_column(String(260), index=True)
@@ -54,6 +55,9 @@ class Event(Base):
     needs_review: Mapped[bool] = mapped_column(Boolean, default=True)
     raw_payload: Mapped[dict | None] = mapped_column(JSON)
     editorial_note: Mapped[str | None] = mapped_column(Text)
+    duplicate_reason: Mapped[str | None] = mapped_column(Text)
+    featured: Mapped[bool] = mapped_column(Boolean, default=False)
+    instagram_suitable: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -66,3 +70,5 @@ class Event(Base):
     artist = relationship("Artist", back_populates="events")
     source = relationship("Source", back_populates="events")
     social_posts = relationship("SocialPost", back_populates="event")
+    raw_events = relationship("RawEvent", foreign_keys="RawEvent.event_id", back_populates="event")
+    duplicate_of_event = relationship("Event", remote_side=[id], foreign_keys=[duplicate_of_event_id])

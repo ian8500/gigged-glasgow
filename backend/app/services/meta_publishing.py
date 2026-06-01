@@ -86,3 +86,56 @@ def publish_via_meta_placeholder(post: SocialPost) -> dict:
         "reason": "Meta publishing service is intentionally not active in v1.",
         "payload": prepare_meta_publish_payload(post),
     }
+
+
+def createInstagramMediaContainer(post: SocialPost) -> dict:
+    """Placeholder for Meta Graph API media container creation.
+
+    TODO: Implement with official Meta Graph API only after these env vars are
+    configured and reviewed: META_APP_ID, META_APP_SECRET, META_ACCESS_TOKEN,
+    INSTAGRAM_BUSINESS_ACCOUNT_ID, META_GRAPH_API_VERSION.
+    """
+    readiness = get_meta_readiness()
+    return {
+        "created": False,
+        "container_id": None,
+        "ready": readiness.ready,
+        "reason": "Placeholder only. Host image assets and call Meta media container API in a future pass.",
+        "required_env": [
+            "META_APP_ID",
+            "META_APP_SECRET",
+            "META_ACCESS_TOKEN",
+            "INSTAGRAM_BUSINESS_ACCOUNT_ID",
+            "META_GRAPH_API_VERSION",
+        ],
+        "payload": prepare_meta_publish_payload(post),
+    }
+
+
+def publishInstagramContainer(container_id: str) -> dict:
+    """Placeholder for publishing a previously created Instagram container."""
+    readiness = get_meta_readiness()
+    return {
+        "published": False,
+        "container_id": container_id,
+        "ready": readiness.ready,
+        "reason": "Placeholder only. Official Meta publish call is intentionally not connected yet.",
+    }
+
+
+def publishPost(post: SocialPost) -> dict:
+    """Placeholder end-to-end publisher used by admin routes and future workers."""
+    container = createInstagramMediaContainer(post)
+    if not container["created"] or not container["container_id"]:
+        return {
+            "published": False,
+            "status": "placeholder_only",
+            "reason": container["reason"],
+            "container": container,
+        }
+    return publishInstagramContainer(container["container_id"])
+
+
+create_instagram_media_container = createInstagramMediaContainer
+publish_instagram_container = publishInstagramContainer
+publish_post = publishPost

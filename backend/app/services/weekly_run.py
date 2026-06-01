@@ -396,6 +396,7 @@ def dedupe_payload(report: DedupeReport) -> dict[str, Any]:
     return {
         "reviewed": report.reviewed,
         "merged": report.merged,
+        "marked_for_review": report.marked_for_review,
         "updated_fingerprints": report.updated_fingerprints,
     }
 

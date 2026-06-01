@@ -30,3 +30,5 @@ class Source(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     events = relationship("Event", back_populates="source")
+    raw_events = relationship("RawEvent", back_populates="source")
+    ingestion_runs = relationship("IngestionRun", back_populates="source")
