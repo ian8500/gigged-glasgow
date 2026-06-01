@@ -22,7 +22,10 @@ class WeeklyIssueUpdate(BaseModel):
 
 @router.post("/run")
 def weekly_run(city: str = "glasgow", db: Session = Depends(get_db)) -> dict:
-    report = run_weekly_issue_workflow(db, city)
+    try:
+        report = run_weekly_issue_workflow(db, city)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"message": str(exc), "fix": "Run python manage.py seed, then retry the weekly run."}) from exc
     return {
         "city": report.city,
         "issue_id": report.issue_id,

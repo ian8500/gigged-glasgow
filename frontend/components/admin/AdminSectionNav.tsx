@@ -6,11 +6,13 @@ const adminItems = [
   ["/admin/venue-coverage", "Venue coverage"],
   ["/admin/weekly", "Weekly builder"],
   ["/admin/social", "Social posts"],
+  ["/admin/submissions", "Submissions"],
   ["/admin/instagram", "Instagram"],
   ["/admin/settings", "Settings"],
   ["/admin/brand-settings", "Brand"],
   ["/admin/city-settings", "City"],
-  ["/admin/source-settings", "Sources"]
+  ["/admin/source-settings", "Sources"],
+  ["/admin/feeds", "Feeds"]
 ];
 
 export function AdminSectionNav() {

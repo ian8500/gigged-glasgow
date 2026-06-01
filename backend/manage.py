@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+from urllib.parse import urlparse
 
+from app.core.settings import settings
 from app.db.schema import create_or_update_local_schema
 from app.db.session import engine, SessionLocal
-from app.models import artist, city, city_brand, event, ingestion_log, source, social_post, venue, venue_check_log, venue_coverage, weekly_issue  # noqa: F401
+from app.models import artist, city, city_brand, event, extracted_event_candidate, ingestion_log, promoter_submission, scrape_run, source, source_feed, source_health, social_post, venue, venue_check_log, venue_coverage, weekly_issue  # noqa: F401
 from app.services.deduplication import dedupe_city
 from app.services.ingestion import ingest_city
 from app.services.seed import seed_glasgow
@@ -77,6 +80,49 @@ def weekly_run(city_slug: str) -> None:
     )
 
 
+def reset_local(yes: bool = False) -> None:
+    if not settings.database_url.startswith("sqlite"):
+        raise SystemExit("reset-local only supports local SQLite DATABASE_URL values.")
+
+    database_path = sqlite_database_path()
+    if database_path is None:
+        raise SystemExit(f"Could not resolve SQLite database path from {settings.database_url!r}.")
+
+    if not yes:
+        answer = input(
+            f"This will delete and recreate {database_path}. .env files are not touched. Continue? [y/N] "
+        )
+        if answer.strip().lower() not in {"y", "yes"}:
+            print("Reset cancelled.")
+            return
+
+    if database_path.exists():
+        database_path.unlink()
+        print(f"Deleted {database_path}")
+
+    init_db()
+    seed()
+    print("Local database reset complete.")
+    print("Next commands:")
+    print("  cd backend && source .venv/bin/activate && uvicorn app.main:app --reload")
+    print("  cd frontend && npm run dev")
+    print("  npm run doctor")
+
+
+def sqlite_database_path() -> Path | None:
+    parsed = urlparse(settings.database_url)
+    if parsed.scheme != "sqlite":
+        return None
+    if parsed.path and parsed.path != "/":
+        raw_path = parsed.path
+        if raw_path.startswith("/") and not settings.database_url.startswith("sqlite:////"):
+            raw_path = raw_path[1:]
+    else:
+        raw_path = settings.database_url.removeprefix("sqlite:///")
+    path = Path(raw_path)
+    return path if path.is_absolute() else Path.cwd() / path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gigged Glasgow backend management commands")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -92,6 +138,8 @@ def main() -> None:
     social_parser.add_argument("--city", default="glasgow", help="City slug to generate")
     weekly_run_parser = subparsers.add_parser("weekly-run", help="Run the automated weekly issue workflow")
     weekly_run_parser.add_argument("--city", default="glasgow", help="City slug to generate")
+    reset_parser = subparsers.add_parser("reset-local", help="Delete and recreate the local SQLite database")
+    reset_parser.add_argument("--yes", action="store_true", help="Run without an interactive confirmation prompt")
 
     args = parser.parse_args()
     if args.command == "init-db":
@@ -108,6 +156,8 @@ def main() -> None:
         generate_social(args.city)
     if args.command == "weekly-run":
         weekly_run(args.city)
+    if args.command == "reset-local":
+        reset_local(args.yes)
 
 
 if __name__ == "__main__":

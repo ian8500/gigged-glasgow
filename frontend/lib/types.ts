@@ -7,8 +7,21 @@ export type Venue = {
   postcode: string | null;
   capacity: number | null;
   website_url: string | null;
+  official_website_url: string | null;
   event_listings_url: string | null;
   ticketing_url: string | null;
+  official_events_url: string | null;
+  feed_url: string | null;
+  source_mode: string;
+  robots_allowed: boolean | null;
+  scraper_status: string | null;
+  scraper_notes: string | null;
+  scraper_selector_config: Record<string, unknown> | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  structure_changed: boolean;
+  confidence_score: number;
+  selector_config: Record<string, unknown> | null;
   instagram_handle: string | null;
   source_discovered_from: string | null;
   last_checked_at: string | null;
@@ -17,6 +30,42 @@ export type Venue = {
   coverage_status: string;
   notes: string | null;
   is_whitelisted: boolean;
+};
+
+export type ScrapeStatus = {
+  id?: number;
+  city_slug?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  status: string;
+  venues_checked: number;
+  events_found: number;
+  events_created: number;
+  events_needing_review: number;
+  candidates_needing_review?: number;
+  errors: string[];
+  warnings: string[];
+};
+
+export type ExtractedEventCandidate = {
+  id: number;
+  venue_id: number;
+  venue_name: string | null;
+  city_slug: string;
+  source_url: string | null;
+  source_type: string;
+  raw_title: string | null;
+  title: string;
+  artist: string | null;
+  starts_at: string | null;
+  price_text: string | null;
+  ticket_url: string | null;
+  image_url: string | null;
+  confidence_score: number;
+  status: "needs_review" | "approved" | "rejected" | "duplicate" | string;
+  existing_event_id: number | null;
+  raw_payload: Record<string, unknown> | null;
+  created_at: string | null;
 };
 
 export type VenueCoverageSummary = {
@@ -31,6 +80,17 @@ export type VenueCoverageSummary = {
   automated: number;
   manual_only: number;
   unsupported: number;
+  api_covered_venues?: number;
+  feed_covered_venues?: number;
+  structured_data_venues?: number;
+  selector_supported_venues?: number;
+  blocked_unsupported_venues?: number;
+  partner_required_venues?: number;
+  sources_needing_credentials?: number;
+  sources_needing_permission?: number;
+  sources_failing?: number;
+  sources_working?: number;
+  weekly_confidence_score?: number;
   coverage_score: number;
   explanation: string;
   missing: string[];
@@ -45,7 +105,20 @@ export type VenueCoverageItem = {
   postcode: string | null;
   website: string | null;
   website_url: string | null;
+  official_website_url: string | null;
   event_listings_url: string | null;
+  official_events_url: string | null;
+  feed_url: string | null;
+  source_mode: string;
+  robots_allowed: boolean | null;
+  scraper_status?: string | null;
+  scraper_notes?: string | null;
+  scraper_selector_config?: Record<string, unknown> | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  structure_changed: boolean;
+  confidence_score: number;
+  selector_config: Record<string, unknown> | null;
   ticketing_url: string | null;
   instagram_handle: string | null;
   source_discovered_from: string | null;
@@ -60,6 +133,7 @@ export type VenueCoverageItem = {
     events_found: number;
     message: string | null;
     structure_changed: boolean;
+    diagnostic_summary?: Record<string, unknown>;
   } | null;
 };
 
@@ -81,9 +155,11 @@ export type Event = {
   city_id: number;
   title: string;
   slug: string;
+  artist?: string | null;
   starts_at: string;
   ends_at: string | null;
   ticket_url: string | null;
+  source_url?: string | null;
   image_url: string | null;
   price_min: string | null;
   price_max: string | null;
@@ -93,6 +169,10 @@ export type Event = {
   confidence_score: number;
   source_attribution: string;
   needs_review: boolean;
+  editorial_note?: string | null;
+  top_pick?: boolean;
+  hidden_gem?: boolean;
+  cheap_gig?: boolean;
   venue: Venue | null;
 };
 
@@ -139,6 +219,9 @@ export type SocialPost = {
     [key: string]: unknown;
   } | null;
   status: string;
+  planned_for?: string | null;
+  exported_at?: string | null;
+  posted_manually_at?: string | null;
   created_at: string;
 };
 
@@ -214,10 +297,60 @@ export type AppSettings = {
 export type SourceConfig = {
   id: number;
   name: string;
+  slug: string | null;
   kind: string;
   base_url: string | null;
   terms_url: string | null;
   is_enabled: boolean;
   notes: string | null;
+  requires_credentials: boolean;
+  required_settings: string[];
+  official_api_available: string | null;
+  current_mode: string | null;
+  terms_reviewed: boolean;
+  automation_allowed: string | null;
+  limitations: string | null;
+  admin_url: string | null;
+  health: {
+    status: string;
+    last_tested_at: string | null;
+    last_success_at: string | null;
+    last_ingest_at: string | null;
+    last_error: string | null;
+    configured: boolean;
+    enabled: boolean;
+    events_last_found: number;
+    warnings: string[];
+  };
+  created_at: string | null;
+};
+
+export type SourceFeed = {
+  id: number;
+  source_name: string;
+  venue_id: number | null;
+  city_slug: string;
+  feed_url: string;
+  feed_type: string;
+  enabled: boolean;
+  last_checked_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  notes: string | null;
+};
+
+export type PromoterSubmission = {
+  id: number;
+  event_title: string;
+  artist: string;
+  venue: string;
+  date: string;
+  time: string;
+  ticket_url: string;
+  price: string | null;
+  promoter_contact_email: string;
+  image_upload_url: string | null;
+  notes: string | null;
+  status: string;
   created_at: string | null;
 };

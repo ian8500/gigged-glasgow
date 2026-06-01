@@ -9,6 +9,35 @@ seed data, and source settings.
 **Tagline:** Your weekly Glasgow gig radar.  
 **Stack:** FastAPI, SQLite, SQLAlchemy, Next.js, Tailwind CSS
 
+## Local Quick Start
+
+Backend:
+
+```bash
+cd backend
+source .venv/bin/activate
+python manage.py init-db
+python manage.py seed
+python manage.py reset-local --yes
+uvicorn app.main:app --reload
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Diagnostics:
+
+```bash
+npm run doctor
+npm run test
+npm run test:ui
+```
+
 ## Source Policy
 
 Gigged Glasgow must not bypass paywalls, logins, robots.txt, or website terms.
@@ -18,9 +47,21 @@ should only be added after reviewing each source's robots.txt and terms.
 
 The venue coverage system follows the same rule. It can store venue leads from
 public directories and ticketing platforms, but it treats those as discovery
-signals rather than permission to scrape. Live venue checks use lightweight
-robots-aware public page checks only; no browser automation, login flow,
-CAPTCHA bypass, anti-bot bypass, or paywalled source access is allowed.
+signals rather than permission to scrape. Live venue checks only use configured
+official venue sources stored against the venue record: `official_events_url`,
+`feed_url`, official structured data, or a manually approved selector map. The
+checker does not crawl the wider internet, does not use browser automation, and
+does not parse Instagram, Facebook, TikTok, DICE, Resident Advisor, Skiddle,
+Eventbrite web pages, login pages, paywalled pages, CAPTCHA-protected pages, or
+anti-bot-protected pages. It checks `robots.txt` where practical, identifies
+itself with a Gigged Glasgow User-Agent, uses timeout and retry limits, and
+stores only a diagnostic summary rather than full copyrighted page HTML.
+
+Official venue page results are never published directly. JSON-LD, simple
+microdata, RSS, iCal, and selector-derived events all enter the admin review
+queue with source attribution and confidence scoring. Editors must approve,
+reject, or amend those candidates before they can be used in public listings or
+weekly publishing.
 
 Instagram publishing is manual by default. The app exports PNGs, captions,
 hashtags, alt text, and scheduling JSON for human review. Do not add password
@@ -28,12 +69,64 @@ login automation, private Instagram APIs, browser bots, likes, follows,
 comments, or DM automation. Any future direct publishing must use Meta's
 official Instagram Graph API and only after explicit approval.
 
+## Safe Venue-Page Auto Finder
+
+The Auto Finder is a review-only assistant for known venue pages. It checks only
+official venue event pages and feeds stored in the venue database. It prefers
+JSON-LD `schema.org/Event`, RSS/Atom, iCal, and manually configured selector maps
+for simple venue pages.
+
+It does not scrape Instagram, Facebook, TikTok, Eventbrite web pages, Skiddle
+web pages, DICE, Resident Advisor, login pages, paywalled pages, CAPTCHA pages,
+anti-bot protected pages, blocked `robots.txt` paths, or the wider internet. It
+does not use browser automation.
+
+Run from the frontend:
+
+```text
+/scrape -> Run city scrape -> review candidates -> approve/reject/convert
+```
+
+Run from curl:
+
+```bash
+curl -sS -X POST \
+  -H "X-Admin-Token: change-me-in-production" \
+  "http://localhost:8000/api/v1/admin/scrape/run?city=glasgow"
+```
+
+Check one venue:
+
+```bash
+curl -sS -X POST \
+  -H "X-Admin-Token: change-me-in-production" \
+  "http://localhost:8000/api/v1/admin/scrape/venues/1"
+```
+
+List extracted candidates:
+
+```bash
+curl -sS \
+  -H "X-Admin-Token: change-me-in-production" \
+  "http://localhost:8000/api/v1/admin/scrape/candidates?city=glasgow"
+```
+
+Candidates are stored as `ExtractedEventCandidate` rows with `needs_review`
+status. They only become `Event` rows after a human converts them. See
+`SCRAPING_POLICY.md` for the full policy and selector configuration details.
+
 ## Current Phase
 
 The MVP now has the backend pieces needed for an automated weekly gig discovery
 and Instagram content engine:
 
 - Ticketmaster Discovery API ingestion for Glasgow music events using the official API.
+- Eventbrite API token testing and Glasgow music event ingestion where the official Eventbrite API exposes public discovery for the configured account/token.
+- Bandsintown artist-seed ingestion using the official artist events API.
+- Songkick partner/licensed metro-area ingestion when a licensed API key and metro area ID are configured.
+- Generic public RSS, Atom, and iCal feed ingestion for venues/promoters that expose safe feeds.
+- Safe venue structured-data parsing for JSON-LD Event schema where venue pages expose it clearly.
+- Promoter submissions that always enter review before publishing.
 - A `SourceAdapter` contract for future official API, RSS, partner export, or manually supplied sources.
 - Event normalisation, source attribution, source URLs, external IDs, confidence scoring, dedupe fingerprints, and ingestion logs.
 - A Glasgow venue coverage dashboard with source health, stale checks, broken sources, manual-only venues, and weekly pre-publish safety reporting.
@@ -190,9 +283,12 @@ Set API keys in `backend/.env`:
 ```dotenv
 ADMIN_API_KEY=change-me-in-production
 TICKETMASTER_API_KEY=your-ticketmaster-discovery-api-key
-EVENTBRITE_API_KEY=
+EVENTBRITE_API_KEY=your-eventbrite-personal-oauth-token
 SONGKICK_API_KEY=
+SONGKICK_PARTNER_MODE=false
+SONGKICK_METRO_AREA_ID=
 BANDSINTOWN_APP_ID=
+BANDSINTOWN_ARTIST_SEED_LIST=
 MANUAL_EVENTS_CSV_PATH=seeds/manual_events.csv
 INSTAGRAM_HANDLE=@giggedglasgow
 META_APP_ID=
@@ -209,6 +305,55 @@ Runtime lookup uses the saved Settings value first and `backend/.env` second.
 `TICKETMASTER_API_KEY` is optional for local smoke tests, but Ticketmaster
 ingestion will be skipped until it is set. Get a key from Ticketmaster
 Developer and use the official Discovery API product.
+
+### Eventbrite setup
+
+Eventbrite uses a personal OAuth token for API calls. Add it in Settings as
+`eventbrite_api_key`, or set `EVENTBRITE_API_KEY` in `backend/.env`. Saved
+values are resolved before `.env`, and the token is only returned to the
+frontend as a masked value.
+
+Use `POST /api/v1/settings/test-eventbrite` or the Settings screen's
+`Test Eventbrite` button to validate the token against the official
+`/users/me/` profile endpoint. Use `Enable Eventbrite` only after that test
+succeeds; the backend also re-runs the profile test before enabling the source.
+
+Eventbrite ingestion uses only official Eventbrite API endpoints. It attempts
+public discovery through `/events/search/` for Glasgow music events, with venue,
+category, organizer, and ticket availability expansions. If your token is valid
+but Eventbrite does not expose public discovery to that account/token, ingestion
+returns a clear warning and does not scrape Eventbrite pages.
+
+### Source Status
+
+| Source | Current mode | Credentials | Notes |
+| --- | --- | --- | --- |
+| Ticketmaster Discovery API | working | `ticketmaster_api_key` / `TICKETMASTER_API_KEY` | Official Discovery API; broad ticketing coverage, not all Glasgow gigs. |
+| Eventbrite | working where official discovery is available | `eventbrite_api_key` / `EVENTBRITE_API_KEY` | Uses `/users/me/` for token tests and official event search only. Some tokens cannot access public discovery. |
+| Bandsintown | working, artist-seed based | `bandsintown_app_id`, `bandsintown_artist_seed_list` | Looks up known artists and filters to Glasgow. Not complete city-wide discovery. |
+| Songkick | partner/licensed access required | `songkick_api_key`, `songkick_partner_mode=true`, `songkick_metro_area_id` | Uses metro-area calendar only when licensed/partner access exists. |
+| Public RSS/Atom/iCal feeds | working per configured feed | none unless feed itself requires permission | Add feeds in Admin > Feeds. Missing venue/date details are low confidence and sent to review. |
+| Official venue structured data | framework available/manual-only until configured | none | Only extracts JSON-LD Event schema or public feed links where present. No browser automation. |
+| Manual CSV | manual-only | `MANUAL_EVENTS_CSV_PATH` | Local CSV import. |
+| Promoter submissions | manual-only | none | Public submissions never publish automatically. |
+| Skiddle, See Tickets, AXS, Ticketweb, Ents24 | partner-required/placeholder | partner/feed access | No ingestion unless official API/feed/permission is configured. |
+| DICE, Resident Advisor | partner-required | partner permission | No private API use and no scraping. |
+| Instagram, Facebook | not event ingestion sources | n/a | The app does not scrape social platforms. |
+
+Safe-source rule: Gigged Glasgow does not scrape login pages, paywalls,
+CAPTCHAs, Instagram, Facebook, DICE private APIs, Resident Advisor private APIs,
+or any source that blocks automated access. If an integration is unavailable or
+requires partner access, the source status says so.
+
+### Adding a Source Adapter
+
+New adapters should inherit the source adapter base contract and expose:
+`name`, `slug`, `kind`, `requires_credentials`, `required_settings`,
+`is_configured()`, `test_connection()`, `fetch_events()`, `normalize_event()`,
+`source_status()`, and `source_notes()`. Add the adapter to
+`app/sources/registry.py`, define its Settings keys in
+`app/services/app_settings.py`, and add mocked tests for token checks,
+fetching, normalization, and failure/permission paths.
 
 Useful endpoints:
 
@@ -234,10 +379,25 @@ Useful endpoints:
 - `POST /api/v1/events/{event_id}/mark-top-pick` with `X-Admin-Token`
 - `POST /api/v1/events/dedupe?city=glasgow` with `X-Admin-Token`
 - `POST /api/v1/ingest/ticketmaster?city=glasgow` with `X-Admin-Token`
+- `POST /api/v1/ingest/eventbrite?city=glasgow` with `X-Admin-Token`
+- `POST /api/v1/ingest/bandsintown?city=glasgow` with `X-Admin-Token`
+- `POST /api/v1/ingest/songkick?city=glasgow` with `X-Admin-Token`
 - `POST /api/v1/ingest/all?city=glasgow` with `X-Admin-Token`
 - `GET /api/v1/ingest/logs?city=glasgow` with `X-Admin-Token`
 - `GET /api/v1/sources`
 - `PATCH /api/v1/sources/{source_id}` with `X-Admin-Token`
+- `POST /api/v1/sources/{source_id}/test` with `X-Admin-Token`
+- `POST /api/v1/sources/{source_id}/ingest?city=glasgow` with `X-Admin-Token`
+- `GET /api/v1/feeds?city=glasgow` with `X-Admin-Token`
+- `POST /api/v1/feeds` with `X-Admin-Token`
+- `POST /api/v1/feeds/{feed_id}/test` with `X-Admin-Token`
+- `POST /api/v1/feeds/{feed_id}/run` with `X-Admin-Token`
+- `PATCH /api/v1/feeds/{feed_id}` with `X-Admin-Token`
+- `DELETE /api/v1/feeds/{feed_id}` with `X-Admin-Token`
+- `POST /api/v1/submissions`
+- `GET /api/v1/submissions?status=pending` with `X-Admin-Token`
+- `POST /api/v1/submissions/{submission_id}/approve` with `X-Admin-Token`
+- `POST /api/v1/submissions/{submission_id}/reject` with `X-Admin-Token`
 - `POST /api/v1/weekly/run?city=glasgow` with `X-Admin-Token`
 - `GET /api/v1/weekly/issues?city=glasgow` with `X-Admin-Token`
 - `GET /api/v1/weekly/issues/{issue_id}` with `X-Admin-Token`
@@ -254,6 +414,10 @@ Useful endpoints:
 - `GET /api/v1/settings` with `X-Admin-Token`
 - `PATCH /api/v1/settings` with `X-Admin-Token`
 - `POST /api/v1/settings/test-ticketmaster` with `X-Admin-Token`
+- `POST /api/v1/settings/test-eventbrite` with `X-Admin-Token`
+- `POST /api/v1/settings/enable-eventbrite` with `X-Admin-Token`
+- `POST /api/v1/settings/test-bandsintown` with `X-Admin-Token`
+- `POST /api/v1/settings/test-songkick` with `X-Admin-Token`
 - `POST /api/v1/settings/test-instagram` with `X-Admin-Token`
 - `POST /api/v1/settings/test-all` with `X-Admin-Token`
 - `GET /api/v1/admin/dashboard` with `X-Admin-Token`
@@ -424,13 +588,20 @@ npm run dev
 Verification:
 
 ```bash
-npm run typecheck
-npm run test:buttons
+npm run doctor
+npm run test
+npm run test:ui
+cd frontend && npm run test:buttons
 ```
 
 `npm run test:buttons` is a lightweight frontend smoke test that fails on
 placeholder links, console-only interactions, and raw buttons that are not owned
 by a form or explicit click handler.
+
+`npm run doctor` checks local env files, matching admin tokens, dependencies,
+SQLite schema and seed data, backend health, and whether the frontend dev server
+is reachable. `npm run test:ui` verifies the required frontend routes exist and
+then runs a production Next.js build.
 
 ## Automation Boundaries And Limitations
 

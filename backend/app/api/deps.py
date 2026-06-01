@@ -18,9 +18,19 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
-    if not x_admin_token or x_admin_token != settings.admin_api_key:
+    if not x_admin_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Valid X-Admin-Token header required.",
+            detail={
+                "message": "Missing X-Admin-Token header.",
+                "fix": "Send X-Admin-Token with the same ADMIN_API_KEY value used by backend/.env.",
+            },
         )
-
+    if x_admin_token != settings.admin_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "message": "Wrong X-Admin-Token header.",
+                "fix": "Make ADMIN_API_KEY match in backend/.env and frontend/.env.local, then restart both servers.",
+            },
+        )

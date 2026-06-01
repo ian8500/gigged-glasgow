@@ -16,7 +16,15 @@ async function adminFetch(path: string, init?: RequestInit) {
   });
 
   if (!response.ok) {
-    throw new Error(`Admin request failed: ${response.status}`);
+    const data = await response.json().catch(() => ({}));
+    const detail = data.detail;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : detail?.message
+          ? `${detail.message}${detail.fix ? ` ${detail.fix}` : ""}`
+          : `Admin request failed: ${response.status}`;
+    throw new Error(message);
   }
 }
 
@@ -156,7 +164,7 @@ export async function seedVenueCoverage() {
 }
 
 export async function checkAllVenues() {
-  await adminFetch("/venues/bulk-check?city=glasgow", { method: "POST" });
+  await adminFetch("/admin/venue-coverage/check-all?city=glasgow", { method: "POST" });
   revalidatePath("/admin/venue-coverage");
   revalidatePath("/admin/weekly");
 }
@@ -171,6 +179,11 @@ export async function markVenueManualOnly(formData: FormData) {
   revalidatePath("/admin/venue-coverage");
 }
 
+export async function markVenueChecked(formData: FormData) {
+  await adminFetch(`/venues/${formData.get("venueId")}/mark-checked`, { method: "POST" });
+  revalidatePath("/admin/venue-coverage");
+}
+
 export async function markVenueSourceBroken(formData: FormData) {
   await adminFetch(`/venues/${formData.get("venueId")}/mark-source-broken`, { method: "POST" });
   revalidatePath("/admin/venue-coverage");
@@ -181,6 +194,7 @@ export async function createVenue(formData: FormData) {
   if (!name.trim()) {
     throw new Error("Venue name is required");
   }
+  const selectorConfig = parseSelectorConfig(formData.get("selector_config"));
   await adminFetch("/venues", {
     method: "POST",
     body: JSON.stringify({
@@ -191,6 +205,11 @@ export async function createVenue(formData: FormData) {
       postcode: formData.get("postcode") || null,
       website_url: formData.get("website_url") || null,
       event_listings_url: formData.get("event_listings_url") || null,
+      official_website_url: formData.get("official_website_url") || formData.get("website_url") || null,
+      official_events_url: formData.get("official_events_url") || formData.get("event_listings_url") || null,
+      feed_url: formData.get("feed_url") || null,
+      source_mode: formData.get("source_mode") || "manual_only",
+      selector_config: selectorConfig,
       ticketing_url: formData.get("ticketing_url") || null,
       instagram_handle: formData.get("instagram_handle") || null,
       coverage_status: formData.get("coverage_status") || "manual_only",
@@ -203,6 +222,7 @@ export async function createVenue(formData: FormData) {
 }
 
 export async function editVenue(formData: FormData) {
+  const selectorConfig = parseSelectorConfig(formData.get("selector_config"));
   await adminFetch(`/venues/${formData.get("venueId")}`, {
     method: "PATCH",
     body: JSON.stringify({
@@ -210,7 +230,12 @@ export async function editVenue(formData: FormData) {
       address: formData.get("address") || null,
       postcode: formData.get("postcode") || null,
       website_url: formData.get("website_url") || null,
+      official_website_url: formData.get("official_website_url") || formData.get("website_url") || null,
       event_listings_url: formData.get("event_listings_url") || null,
+      official_events_url: formData.get("official_events_url") || formData.get("event_listings_url") || null,
+      feed_url: formData.get("feed_url") || null,
+      source_mode: formData.get("source_mode") || "manual_only",
+      selector_config: selectorConfig,
       ticketing_url: formData.get("ticketing_url") || null,
       instagram_handle: formData.get("instagram_handle") || null,
       coverage_status: formData.get("coverage_status"),
@@ -254,6 +279,77 @@ export async function updateSource(formData: FormData) {
     })
   });
   revalidatePath("/admin/source-settings");
+}
+
+export async function testSource(formData: FormData) {
+  await adminFetch(`/sources/${formData.get("sourceId")}/test`, { method: "POST" });
+  revalidatePath("/admin/source-settings");
+}
+
+function parseSelectorConfig(value: FormDataEntryValue | null) {
+  if (!value || typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error("Selector config must be valid JSON.");
+  }
+}
+
+export async function runSourceIngest(formData: FormData) {
+  await adminFetch(`/sources/${formData.get("sourceId")}/ingest?city=glasgow`, { method: "POST" });
+  revalidatePath("/admin/source-settings");
+  revalidateAdmin();
+}
+
+export async function createFeed(formData: FormData) {
+  await adminFetch("/feeds", {
+    method: "POST",
+    body: JSON.stringify({
+      source_name: formData.get("source_name"),
+      feed_url: formData.get("feed_url"),
+      feed_type: formData.get("feed_type"),
+      city_slug: "glasgow",
+      notes: formData.get("notes") || null
+    })
+  });
+  revalidatePath("/admin/feeds");
+}
+
+export async function testFeed(formData: FormData) {
+  await adminFetch(`/feeds/${formData.get("feedId")}/test`, { method: "POST" });
+  revalidatePath("/admin/feeds");
+}
+
+export async function runFeed(formData: FormData) {
+  await adminFetch(`/feeds/${formData.get("feedId")}/run`, { method: "POST" });
+  revalidatePath("/admin/feeds");
+  revalidateAdmin();
+}
+
+export async function disableFeed(formData: FormData) {
+  await adminFetch(`/feeds/${formData.get("feedId")}`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled: false })
+  });
+  revalidatePath("/admin/feeds");
+}
+
+export async function deleteFeed(formData: FormData) {
+  await adminFetch(`/feeds/${formData.get("feedId")}`, { method: "DELETE" });
+  revalidatePath("/admin/feeds");
+}
+
+export async function approveSubmission(formData: FormData) {
+  await adminFetch(`/submissions/${formData.get("submissionId")}/approve`, { method: "POST" });
+  revalidatePath("/admin/submissions");
+  revalidateAdmin();
+}
+
+export async function rejectSubmission(formData: FormData) {
+  await adminFetch(`/submissions/${formData.get("submissionId")}/reject`, { method: "POST" });
+  revalidatePath("/admin/submissions");
 }
 
 function revalidateAdmin() {

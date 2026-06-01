@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -31,7 +32,10 @@ def create_venue(payload: VenueCreate, db: Session = Depends(get_db)) -> Venue:
     city = db.scalar(select(City).where(City.slug == payload.city_slug))
     if city is None:
         raise HTTPException(status_code=404, detail="City not found")
-    venue = Venue(city_id=city.id, **payload.model_dump(exclude={"city_slug"}))
+    values = payload.model_dump(exclude={"city_slug"})
+    values["official_website_url"] = values.get("official_website_url") or values.get("website_url")
+    values["official_events_url"] = values.get("official_events_url") or values.get("event_listings_url")
+    venue = Venue(city_id=city.id, **values)
     db.add(venue)
     db.commit()
     db.refresh(venue)
@@ -39,11 +43,11 @@ def create_venue(payload: VenueCreate, db: Session = Depends(get_db)) -> Venue:
 
 
 @router.post("/bulk-check", dependencies=[Depends(require_admin)])
-def bulk_check_venues(city: str = "glasgow", db: Session = Depends(get_db)) -> dict:
+def bulk_check_venues(city: str = "glasgow", live_http: bool = False, db: Session = Depends(get_db)) -> dict:
     try:
-        return run_all_venue_checks(db, city)
+        return run_all_venue_checks(db, city, live_http=live_http)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail={"message": str(exc), "fix": "Run python manage.py seed, then retry the venue coverage check."}) from exc
 
 
 @router.get("/{venue_id}", response_model=VenueRead)
@@ -59,7 +63,12 @@ def update_venue(venue_id: int, payload: VenueUpdate, db: Session = Depends(get_
     venue = db.get(Venue, venue_id)
     if venue is None:
         raise HTTPException(status_code=404, detail="Venue not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    values = payload.model_dump(exclude_unset=True)
+    if values.get("website_url") and "official_website_url" not in values:
+        values["official_website_url"] = values["website_url"]
+    if values.get("event_listings_url") and "official_events_url" not in values:
+        values["official_events_url"] = values["event_listings_url"]
+    for key, value in values.items():
         setattr(venue, key, value)
     db.commit()
     db.refresh(venue)
@@ -88,7 +97,21 @@ def check_venue(venue_id: int, db: Session = Depends(get_db)) -> dict:
 def mark_venue_manual_only(venue_id: int, db: Session = Depends(get_db)) -> Venue:
     venue = get_venue(venue_id, db)
     venue.coverage_status = "manual_only"
+    venue.source_mode = "manual_only"
     venue.notes = append_note(venue.notes, "Marked manual-only from coverage dashboard.")
+    db.commit()
+    db.refresh(venue)
+    return venue
+
+
+@router.post("/{venue_id}/mark-checked", response_model=VenueRead, dependencies=[Depends(require_admin)])
+def mark_venue_checked(venue_id: int, db: Session = Depends(get_db)) -> Venue:
+    venue = get_venue(venue_id, db)
+    now = datetime.utcnow()
+    venue.last_checked_at = now
+    venue.notes = append_note(venue.notes, "Marked checked manually from coverage dashboard.")
+    for source in venue.coverage_sources:
+        source.last_checked_at = now
     db.commit()
     db.refresh(venue)
     return venue
@@ -98,6 +121,8 @@ def mark_venue_manual_only(venue_id: int, db: Session = Depends(get_db)) -> Venu
 def mark_venue_source_broken(venue_id: int, db: Session = Depends(get_db)) -> Venue:
     venue = get_venue(venue_id, db)
     venue.coverage_status = "broken"
+    venue.last_error = "Marked source broken from coverage dashboard."
+    venue.structure_changed = True
     venue.notes = append_note(venue.notes, "Marked source broken from coverage dashboard.")
     for source in venue.coverage_sources:
         source.status = "broken"

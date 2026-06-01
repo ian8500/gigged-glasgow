@@ -13,8 +13,16 @@ class VenueCreate(BaseModel):
     postcode: str | None = None
     capacity: int | None = None
     website_url: str | None = None
+    official_website_url: str | None = None
     event_listings_url: str | None = None
     ticketing_url: str | None = None
+    official_events_url: str | None = None
+    feed_url: str | None = None
+    source_mode: str = "manual_only"
+    selector_config: dict | None = None
+    scraper_selector_config: dict | None = None
+    scraper_status: str = "not_checked"
+    scraper_notes: str | None = None
     instagram_handle: str | None = None
     source_discovered_from: str | None = None
     status: str = "active"
@@ -30,8 +38,16 @@ class VenueUpdate(BaseModel):
     postcode: str | None = None
     capacity: int | None = None
     website_url: str | None = None
+    official_website_url: str | None = None
     event_listings_url: str | None = None
     ticketing_url: str | None = None
+    official_events_url: str | None = None
+    feed_url: str | None = None
+    source_mode: str | None = None
+    selector_config: dict | None = None
+    scraper_selector_config: dict | None = None
+    scraper_status: str | None = None
+    scraper_notes: str | None = None
     instagram_handle: str | None = None
     source_discovered_from: str | None = None
     status: str | None = None
@@ -49,8 +65,21 @@ class VenueRead(BaseModel):
     postcode: str | None
     capacity: int | None
     website_url: str | None
+    official_website_url: str | None
     event_listings_url: str | None
     ticketing_url: str | None
+    official_events_url: str | None
+    feed_url: str | None
+    source_mode: str
+    robots_allowed: bool | None
+    scraper_status: str | None
+    scraper_notes: str | None
+    scraper_selector_config: dict | None
+    last_success_at: datetime | None
+    last_error: str | None
+    structure_changed: bool
+    confidence_score: float
+    selector_config: dict | None
     instagram_handle: str | None
     source_discovered_from: str | None
     last_checked_at: datetime | None

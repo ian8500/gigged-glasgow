@@ -1,11 +1,13 @@
 import { LogoMark } from "@/components/brand/LogoMark";
 
 const navItems = [
-  { href: "/", label: "Radar" },
-  { href: "/admin", label: "Admin" },
-  { href: "/brand", label: "Brand" },
-  { href: "/events", label: "Events" },
+  { href: "/", label: "Dashboard" },
   { href: "/venues", label: "Venues" },
+  { href: "/scrape", label: "Auto Finder" },
+  { href: "/events/new", label: "Add Gig" },
+  { href: "/events", label: "Events" },
+  { href: "/weekly", label: "Weekly" },
+  { href: "/social", label: "Social Posts" },
   { href: "/settings", label: "Settings" }
 ];
 
@@ -15,7 +17,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <header className="border-b border-bone/10 bg-ink/70 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
           <LogoMark />
-          <nav className="flex items-center gap-2">
+          <nav className="flex flex-wrap items-center justify-end gap-2">
             {navItems.map((item) => (
               <a
                 key={item.href}

@@ -11,19 +11,30 @@ from dateutil.parser import isoparse
 
 from app.cities.base import CityConfig
 from app.core.settings import settings
-from app.sources.base import EventSourceAdapter, NormalizedSourceEvent, SourceFetchResult
+from app.sources.base import NormalizedSourceEvent, SourceAdapterBase, SourceFetchResult
 
 
-class TicketmasterDiscoveryAdapter(EventSourceAdapter):
+class TicketmasterDiscoveryAdapter(SourceAdapterBase):
     name = "Ticketmaster Discovery API"
+    slug = "ticketmaster"
     kind = "api"
+    requires_credentials = True
+    required_settings = ["ticketmaster_api_key"]
+    official_api_available = "yes"
+    automation_allowed = "yes"
+    terms_reviewed = True
+    current_mode = "working"
+    limitations = "Official Discovery API; broad commercial ticketing coverage, not complete Glasgow coverage."
     base_url = "https://app.ticketmaster.com/discovery/v2/events.json"
     page_size = 200
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key
 
-    def fetch(self, city: CityConfig, start: datetime, end: datetime) -> SourceFetchResult:
+    def is_configured(self) -> bool:
+        return bool(self.api_key or settings.ticketmaster_api_key)
+
+    def fetch_events(self, city: CityConfig, start: datetime, end: datetime) -> SourceFetchResult:
         if city.slug != "glasgow":
             return SourceFetchResult(
                 source_name=self.name,
@@ -108,6 +119,9 @@ class TicketmasterDiscoveryAdapter(EventSourceAdapter):
             return {}, f"Ticketmaster returned HTTP {exc.code}; ingestion stopped."
         except URLError as exc:
             return {}, f"Ticketmaster request failed: {exc.reason}"
+
+    def normalize_event(self, item: dict) -> NormalizedSourceEvent | None:
+        return self._normalise(item)
 
     def _normalise(self, item: dict) -> NormalizedSourceEvent | None:
         dates = item.get("dates", {})

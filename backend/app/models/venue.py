@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -22,11 +22,27 @@ class Venue(Base):
     longitude: Mapped[float | None] = mapped_column(Float)
     capacity: Mapped[int | None] = mapped_column(Integer)
     website_url: Mapped[str | None] = mapped_column(String(400))
+    official_website_url: Mapped[str | None] = mapped_column(String(400))
     event_listings_url: Mapped[str | None] = mapped_column(String(600))
     ticketing_url: Mapped[str | None] = mapped_column(String(600))
+    official_events_url: Mapped[str | None] = mapped_column(String(600))
+    feed_url: Mapped[str | None] = mapped_column(String(800))
+    selector_config: Mapped[dict | None] = mapped_column(JSON)
+    scraper_selector_config: Mapped[dict | None] = mapped_column(JSON)
+    structured_data_supported: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_mode: Mapped[str] = mapped_column(String(80), default="manual_only")
+    scraper_status: Mapped[str] = mapped_column(String(40), default="not_checked")
+    scraper_notes: Mapped[str | None] = mapped_column(Text)
+    robots_allowed: Mapped[bool | None] = mapped_column(Boolean)
+    last_structured_data_check: Mapped[datetime | None] = mapped_column(DateTime)
+    last_structured_data_error: Mapped[str | None] = mapped_column(Text)
     instagram_handle: Mapped[str | None] = mapped_column(String(120))
     source_discovered_from: Mapped[str | None] = mapped_column(String(240))
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    structure_changed: Mapped[bool] = mapped_column(Boolean, default=False)
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.5)
     last_event_found_at: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String(40), default="active", nullable=False)
     coverage_status: Mapped[str] = mapped_column(String(40), default="manual_only", nullable=False)
@@ -40,6 +56,11 @@ class Venue(Base):
     check_logs = relationship("VenueCheckLog", back_populates="venue", cascade="all, delete-orphan")
     coverage_sources = relationship(
         "VenueCoverage",
+        back_populates="venue",
+        cascade="all, delete-orphan",
+    )
+    extracted_candidates = relationship(
+        "ExtractedEventCandidate",
         back_populates="venue",
         cascade="all, delete-orphan",
     )

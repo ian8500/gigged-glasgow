@@ -20,6 +20,7 @@ from app.models.event import Event
 from app.models.venue import Venue
 from app.models.venue_check_log import VenueCheckLog
 from app.models.venue_coverage import VenueCoverage
+from app.services.venue_page_checker import check_venue_page
 
 SEED_DIR = Path(__file__).resolve().parents[2] / "seeds"
 USER_AGENT = "GiggedGlasgowVenueCoverage/0.1 (+manual editorial review)"
@@ -102,6 +103,9 @@ class VenueCheckResult:
     events_found: int
     message: str
     structure_changed: bool
+    events_created: int = 0
+    events_updated: int = 0
+    duplicates_skipped: int = 0
 
 
 def seed_glasgow_venue_coverage(db: Session) -> int:
@@ -123,7 +127,11 @@ def seed_glasgow_venue_coverage(db: Session) -> int:
         venue.postcode = item.get("postcode")
         venue.capacity = item.get("capacity")
         venue.website_url = item.get("website_url")
+        venue.official_website_url = item.get("official_website_url") or item.get("website_url")
         venue.event_listings_url = item.get("event_listings_url")
+        venue.official_events_url = item.get("official_events_url") or item.get("event_listings_url")
+        venue.feed_url = item.get("feed_url")
+        venue.source_mode = item.get("source_mode") or ("structured_data" if venue.official_events_url else "manual_only")
         venue.ticketing_url = item.get("ticketing_url")
         venue.instagram_handle = item.get("instagram_handle")
         venue.source_discovered_from = item.get("source_discovered_from")
@@ -163,6 +171,7 @@ def venue_coverage_payload(db: Session, city_slug: str = "glasgow") -> dict[str,
         .unique()
     )
     summary = build_coverage_summary(db, venues)
+    coverage_seeded = any(venue.coverage_sources for venue in venues)
     return {
         "city": city.name,
         "city_slug": city.slug,
@@ -170,22 +179,71 @@ def venue_coverage_payload(db: Session, city_slug: str = "glasgow") -> dict[str,
         "pre_publish_report": build_pre_publish_report(summary, venues),
         "discovery_sources": DISCOVERY_SOURCES,
         "venues": [venue_payload(venue) for venue in venues],
+        "setup": {
+            "venues_seeded": bool(venues),
+            "venue_coverage_seeded": coverage_seeded,
+            "message": setup_message(venues, coverage_seeded),
+        },
     }
 
 
-def run_all_venue_checks(db: Session, city_slug: str = "glasgow", live_http: bool = False) -> dict[str, Any]:
+def run_all_venue_checks(db: Session, city_slug: str = "glasgow", live_http: bool = True) -> dict[str, Any]:
     city = require_city(db, city_slug)
     venues = list(db.scalars(select(Venue).where(Venue.city_id == city.id).order_by(Venue.name.asc())))
-    results = [check_venue_now(db, venue.id, live_http=live_http) for venue in venues]
+    if not venues:
+        raise ValueError(f"No venues are seeded for city '{city_slug}'.")
+    if not any(venue.coverage_sources for venue in venues):
+        raise ValueError(f"Venue coverage seed data is missing for city '{city_slug}'.")
+    check_targets = [venue for venue in venues if venue_check_eligible(venue)] if live_http else venues
+    results = [check_venue_now(db, venue.id, live_http=live_http) for venue in check_targets]
     payload = venue_coverage_payload(db, city_slug)
     payload["check_results"] = [asdict(result) for result in results]
     return payload
+
+
+def venue_check_eligible(venue: Venue) -> bool:
+    return venue.source_mode not in {"manual_only", "unsupported", "api"} and bool(
+        venue.official_events_url or venue.feed_url
+    )
 
 
 def check_venue_now(db: Session, venue_id: int, live_http: bool = True) -> VenueCheckResult:
     venue = db.get(Venue, venue_id)
     if venue is None:
         raise ValueError("Venue not found")
+
+    if live_http:
+        report = check_venue_page(db, venue_id)
+        refreshed = db.get(Venue, venue_id)
+        coverage = upsert_venue_coverage(
+            db,
+            venue=refreshed or venue,
+            source_name="Official venue page checker",
+            source_url=report.source_url,
+            coverage_type=report.coverage_type,
+            status=report.status,
+            last_checked_at=datetime.utcnow(),
+            last_successful_event_found_at=(refreshed or venue).last_event_found_at,
+            error_message=(refreshed or venue).last_error,
+            confidence_score=report.confidence_score,
+        )
+        db.commit()
+        return VenueCheckResult(
+            venue_id=report.venue_id,
+            venue_name=report.venue_name,
+            status=coverage.status,
+            source_name=coverage.source_name,
+            source_url=coverage.source_url,
+            coverage_type=coverage.coverage_type,
+            coverage_status=report.coverage_status,
+            confidence_score=report.confidence_score,
+            events_found=report.events_found,
+            events_created=report.events_created,
+            events_updated=report.events_updated,
+            duplicates_skipped=report.duplicates_skipped,
+            message=report.message,
+            structure_changed=report.structure_changed,
+        )
 
     now = datetime.utcnow()
     supported_sources = detect_supported_sources(venue)
@@ -329,6 +387,16 @@ def build_coverage_summary(db: Session, venues: list[Venue]) -> dict[str, Any]:
     needs_review = count_where(venues, lambda venue: any(source.status == "needs_review" for source in venue.coverage_sources))
     broken = sum(1 for venue in venues for source in venue.coverage_sources if source.status == "broken")
     unsupported = count_where(venues, lambda venue: any(source.coverage_type == "unsupported" for source in venue.coverage_sources))
+    api_covered = count_where(venues, lambda venue: any(source.coverage_type == "api" and source.status == "working" for source in venue.coverage_sources))
+    feed_covered = count_where(venues, lambda venue: venue.feed_url or any(source.coverage_type in {"rss", "ical", "feed"} and source.status == "working" for source in venue.coverage_sources))
+    structured_data = count_where(venues, lambda venue: bool(venue.structured_data_supported))
+    selector_supported = count_where(venues, lambda venue: bool(venue.selector_config))
+    blocked_unsupported = count_where(
+        venues,
+        lambda venue: venue.source_mode == "unsupported"
+        or any(source.coverage_type == "unsupported" for source in venue.coverage_sources),
+    )
+    partner_required = count_where(venues, lambda venue: venue.source_mode == "partner_required")
     duplicate = count_where(venues, lambda venue: venue.status == "duplicate")
     monitored = count_where(
         venues,
@@ -385,6 +453,16 @@ def build_coverage_summary(db: Session, venues: list[Venue]) -> dict[str, Any]:
         "automated": automated,
         "manual_only": manual_only,
         "unsupported": unsupported,
+        "api_covered_venues": api_covered,
+        "feed_covered_venues": feed_covered,
+        "structured_data_venues": structured_data,
+        "selector_supported_venues": selector_supported,
+        "blocked_unsupported_venues": blocked_unsupported,
+        "partner_required_venues": partner_required,
+        "sources_needing_credentials": 0,
+        "sources_needing_permission": partner_required,
+        "sources_failing": sources_failed,
+        "weekly_confidence_score": score,
         "coverage_score": score,
         "explanation": explanation,
         "missing": build_missing_list(total, manual_only, needs_review, broken, unsupported, not_checked_30_days, no_events_found),
@@ -403,7 +481,17 @@ def venue_payload(venue: Venue) -> dict[str, Any]:
         "postcode": venue.postcode,
         "website": venue.website_url,
         "website_url": venue.website_url,
+        "official_website_url": venue.official_website_url,
         "event_listings_url": venue.event_listings_url,
+        "official_events_url": venue.official_events_url,
+        "feed_url": venue.feed_url,
+        "source_mode": venue.source_mode,
+        "robots_allowed": venue.robots_allowed,
+        "last_success_at": venue.last_success_at.isoformat() if venue.last_success_at else None,
+        "last_error": venue.last_error,
+        "structure_changed": venue.structure_changed,
+        "confidence_score": venue.confidence_score,
+        "selector_config": venue.selector_config,
         "ticketing_url": venue.ticketing_url,
         "instagram_handle": venue.instagram_handle,
         "source_discovered_from": venue.source_discovered_from,
@@ -420,6 +508,7 @@ def venue_payload(venue: Venue) -> dict[str, Any]:
             "events_found": latest_log.events_found,
             "message": latest_log.message,
             "structure_changed": latest_log.structure_changed,
+            "diagnostic_summary": latest_log.raw_payload,
         }
         if latest_log
         else None,
@@ -449,6 +538,14 @@ def require_city(db: Session, city_slug: str) -> City:
     if city is None:
         raise ValueError(f"City '{city_slug}' has not been seeded.")
     return city
+
+
+def setup_message(venues: list[Venue], coverage_seeded: bool) -> str:
+    if not venues:
+        return "No venues are seeded yet. Run python manage.py seed."
+    if not coverage_seeded:
+        return "Venue coverage seed data is missing. Run python manage.py seed or POST /api/v1/admin/venue-coverage/seed/glasgow."
+    return "Venue coverage seed data is present."
 
 
 def detect_supported_sources(venue: Venue) -> list[str]:
@@ -514,14 +611,16 @@ def infer_seed_coverage_type(item: dict[str, Any]) -> str:
     )
     if "ticketmaster" in values:
         return "api"
-    if item.get("event_listings_url") or item.get("website_url"):
-        return "website"
+    if item.get("feed_url"):
+        return "feed"
+    if item.get("official_events_url") or item.get("event_listings_url") or item.get("website_url"):
+        return "structured_data"
     return "manual"
 
 
 def has_working_automated_source(venue: Venue) -> bool:
     return any(
-        source.coverage_type in {"api", "website"} and source.status == "working"
+        source.coverage_type in {"api", "website", "feed", "structured_data", "selector"} and source.status == "working"
         for source in venue.coverage_sources
     )
 
@@ -530,7 +629,7 @@ def is_manual_only(venue: Venue) -> bool:
     if not venue.coverage_sources:
         return True
     return not any(
-        source.coverage_type in {"api", "website"} and source.status == "working"
+        source.coverage_type in {"api", "website", "feed", "structured_data", "selector"} and source.status == "working"
         for source in venue.coverage_sources
     )
 

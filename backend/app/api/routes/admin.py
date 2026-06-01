@@ -131,7 +131,7 @@ def venue_coverage(city: str = "glasgow", db: Session = Depends(get_db)) -> dict
     try:
         return venue_coverage_payload(db, city)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail={"message": str(exc), "fix": "Run python manage.py seed or POST /api/v1/admin/seed/glasgow."}) from exc
 
 
 @router.post("/venue-coverage/seed/glasgow")
@@ -139,16 +139,16 @@ def seed_venue_coverage(db: Session = Depends(get_db)) -> dict:
     try:
         upserted = seed_glasgow_venue_coverage(db)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail={"message": str(exc), "fix": "Run python manage.py seed first."}) from exc
     return {"status": "seeded", "city": "glasgow", "venues_upserted": upserted}
 
 
 @router.post("/venue-coverage/check-all")
-def check_all_venues(city: str = "glasgow", db: Session = Depends(get_db)) -> dict:
+def check_all_venues(city: str = "glasgow", live_http: bool = False, db: Session = Depends(get_db)) -> dict:
     try:
-        return run_all_venue_checks(db, city)
+        return run_all_venue_checks(db, city, live_http=live_http)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail={"message": str(exc), "fix": "Run python manage.py seed, then retry the venue coverage check."}) from exc
 
 
 @router.post("/venues/{venue_id}/check-now")
@@ -192,8 +192,13 @@ def create_venue(payload: VenueCreate, db: Session = Depends(get_db)) -> Venue:
         postcode=payload.postcode,
         capacity=payload.capacity,
         website_url=payload.website_url,
+        official_website_url=payload.official_website_url or payload.website_url,
         event_listings_url=payload.event_listings_url,
         ticketing_url=payload.ticketing_url,
+        official_events_url=payload.official_events_url or payload.event_listings_url,
+        feed_url=payload.feed_url,
+        source_mode=payload.source_mode,
+        selector_config=payload.selector_config,
         instagram_handle=payload.instagram_handle,
         source_discovered_from=payload.source_discovered_from,
         status=payload.status,

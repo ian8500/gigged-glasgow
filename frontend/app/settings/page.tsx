@@ -1,8 +1,8 @@
 import { SettingsForm } from "@/components/admin/SettingsForm";
-import { getAppSettings } from "@/lib/api";
+import { getSettings } from "@/lib/api";
 
 export default async function SettingsPage() {
-  const settings = await getAppSettings();
+  const settings = await getSettings();
 
   return (
     <main className="space-y-8">
@@ -11,7 +11,7 @@ export default async function SettingsPage() {
           <p className="font-display text-sm uppercase tracking-[0.28em] text-acid">Configuration</p>
           <h1 className="mt-2 font-display text-5xl font-black leading-none text-bone">Settings</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-bone/60">
-            Store API keys, Glasgow search defaults, manual Instagram export details, and brand defaults server-side.
+            Keep brand defaults and manual posting details simple. API keys are optional future automation and are not required.
           </p>
         </div>
       </section>

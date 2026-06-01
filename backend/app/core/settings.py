@@ -12,7 +12,10 @@ class Settings(BaseSettings):
     ticketmaster_api_key: str | None = None
     eventbrite_api_key: str | None = None
     songkick_api_key: str | None = None
+    songkick_partner_mode: bool = False
+    songkick_metro_area_id: str | None = None
     bandsintown_app_id: str | None = None
+    bandsintown_artist_seed_list: str | None = None
     skiddle_source_settings: str | None = None
     gigs_in_scotland_source_settings: str | None = None
     whats_on_glasgow_source_settings: str | None = None

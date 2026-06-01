@@ -1,0 +1,9 @@
+{
+  "name": "gigged-glasgow",
+  "private": true,
+  "scripts": {
+    "doctor": "python scripts/doctor.py",
+    "test": "cd backend && .venv/bin/pytest -q",
+    "test:ui": "npm --prefix frontend run test:ui"
+  }
+}

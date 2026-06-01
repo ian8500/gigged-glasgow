@@ -23,6 +23,7 @@ from app.services.normalization import (
 )
 from app.services.app_settings import get_raw_setting
 from app.services.seed import seed_glasgow
+from app.services.source_health import adapter_metadata, record_source_ingest
 from app.sources.base import EventSourceAdapter, NormalizedSourceEvent
 from app.sources.registry import get_default_adapters
 
@@ -65,6 +66,8 @@ def ingest_city(
 
     for adapter in adapters or default_adapters_for_db(db):
         source = ensure_source(db, adapter.name, adapter.kind)
+        apply_adapter_metadata(source, adapter)
+        configured = adapter_configured(db, adapter)
         log = IngestionLog(
             city_id=city.id,
             source_id=source.id,
@@ -86,6 +89,23 @@ def ingest_city(
             log.finished_at = datetime.utcnow()
             report.warnings.append(warning)
             report.source_logs.append(ingestion_log_payload(log))
+            record_source_ingest(db, source, None, configured, 0, [warning], 0)
+            continue
+        if source.current_mode == "placeholder":
+            warning = f"{adapter.name} is a placeholder source; ingestion skipped."
+            log.warnings = [warning]
+            log.finished_at = datetime.utcnow()
+            report.warnings.append(warning)
+            report.source_logs.append(ingestion_log_payload(log))
+            record_source_ingest(db, source, None, configured, 0, [warning], 0)
+            continue
+        if source.requires_credentials and not configured:
+            warning = f"{adapter.name} source is not configured; ingestion skipped."
+            log.warnings = [warning]
+            log.finished_at = datetime.utcnow()
+            report.warnings.append(warning)
+            report.source_logs.append(ingestion_log_payload(log))
+            record_source_ingest(db, source, None, configured, 0, [warning], 0)
             continue
 
         try:
@@ -97,6 +117,7 @@ def ingest_city(
             report.failures += 1
             report.warnings.extend(log.warnings)
             log.finished_at = datetime.utcnow()
+            record_source_ingest(db, source, result, configured, 1, log.warnings, 0)
             continue
 
         seen_source_ids: set[str] = set()
@@ -137,6 +158,15 @@ def ingest_city(
 
         log.finished_at = datetime.utcnow()
         report.source_logs.append(ingestion_log_payload(log))
+        record_source_ingest(
+            db,
+            source,
+            result,
+            configured,
+            len(result.failures),
+            log.warnings,
+            len(result.events),
+        )
 
     db.commit()
     return report
@@ -170,6 +200,14 @@ def upsert_event(
         event = fingerprint_match
 
     venue = find_or_create_venue(db, city, venue_whitelist, source_event.venue_name)
+    if source_event.venue_address and not venue.address:
+        venue.address = source_event.venue_address
+    if source_event.venue_postcode and not venue.postcode:
+        venue.postcode = source_event.venue_postcode
+    if source_event.latitude is not None and venue.latitude is None:
+        venue.latitude = source_event.latitude
+    if source_event.longitude is not None and venue.longitude is None:
+        venue.longitude = source_event.longitude
     artist = find_or_create_artist(db, source_event.artist_name or source_event.title)
     score = confidence_score(source_event, venue.is_whitelisted)
 
@@ -188,12 +226,17 @@ def upsert_event(
     event.artist_id = artist.id
     event.source_id = source.id
     event.title = source_event.title
+    event.description = source_event.description
     event.slug = event_slug(source_event.title, source_event.starts_at)
     event.starts_at = source_event.starts_at
     event.ends_at = source_event.ends_at
     event.ticket_url = source_event.ticket_url
     event.source_url = source_event.source_url or source_event.ticket_url
     event.image_url = source_event.image_url
+    event.venue_address = source_event.venue_address
+    event.venue_postcode = source_event.venue_postcode
+    event.latitude = source_event.latitude
+    event.longitude = source_event.longitude
     event.price_min = source_event.price_min
     event.price_max = source_event.price_max
     event.currency = source_event.currency
@@ -212,12 +255,44 @@ def ensure_source(db: Session, name: str, kind: str) -> Source:
     if source is None:
         source = Source(
             name=name,
+            slug=slugify(name),
             kind=kind,
-            is_enabled=name not in {"Eventbrite", "Bandsintown", "Songkick", "Public venue pages"},
+            is_enabled=name in {"Ticketmaster Discovery API", "Manual CSV import"},
         )
         db.add(source)
         db.flush()
+    if not source.slug:
+        source.slug = slugify(name)
     return source
+
+
+def apply_adapter_metadata(source: Source, adapter: EventSourceAdapter) -> None:
+    metadata = adapter_metadata(adapter)  # type: ignore[arg-type]
+    for key, value in metadata.items():
+        if key == "slug" and source.slug:
+            continue
+        if key == "base_url" and source.base_url:
+            continue
+        if key == "terms_url" and source.terms_url:
+            continue
+        if key == "limitations" and source.notes:
+            source.limitations = value or source.limitations
+            continue
+        if hasattr(source, key):
+            setattr(source, key, value)
+    if not source.notes and metadata.get("limitations"):
+        source.notes = metadata["limitations"]
+
+
+def adapter_configured(db: Session, adapter: EventSourceAdapter) -> bool:
+    required_settings = getattr(adapter, "required_settings", [])
+    if not required_settings:
+        return True
+    return all(bool(get_raw_setting(db, key)) for key in required_settings if key != "songkick_partner_mode") and (
+        str(get_raw_setting(db, "songkick_partner_mode")).lower() == "true"
+        if "songkick_partner_mode" in required_settings
+        else True
+    )
 
 
 def find_or_create_artist(db: Session, name: str) -> Artist:
@@ -260,6 +335,52 @@ def get_city_config(city_slug: str):
 def default_adapters_for_db(db: Session) -> list[EventSourceAdapter]:
     adapters = get_default_adapters()
     ticketmaster_key = get_raw_setting(db, "ticketmaster_api_key")
+    eventbrite_key = get_raw_setting(db, "eventbrite_api_key")
+    from app.sources.eventbrite import EventbriteAdapter
+    from app.sources.bandsintown import BandsintownAdapter
+    from app.sources.songkick import SongkickAdapter
+
+    configured_adapters: list[EventSourceAdapter] = []
+    for adapter in adapters:
+        if adapter.name == EventbriteAdapter.name:
+            source = ensure_source(db, adapter.name, adapter.kind)
+            apply_adapter_metadata(source, adapter)
+            if not source.is_enabled or not eventbrite_key:
+                continue
+            configured_adapters.append(EventbriteAdapter(api_key=eventbrite_key))
+            continue
+        if adapter.name == BandsintownAdapter.name:
+            source = ensure_source(db, adapter.name, adapter.kind)
+            apply_adapter_metadata(source, adapter)
+            bandsintown_key = get_raw_setting(db, "bandsintown_app_id")
+            if not source.is_enabled or not bandsintown_key:
+                continue
+            configured_adapters.append(
+                BandsintownAdapter(
+                    app_id=bandsintown_key,
+                    artist_seed_list=get_raw_setting(db, "bandsintown_artist_seed_list"),
+                )
+            )
+            continue
+        if adapter.name == SongkickAdapter.name:
+            source = ensure_source(db, adapter.name, adapter.kind)
+            apply_adapter_metadata(source, adapter)
+            songkick_key = get_raw_setting(db, "songkick_api_key")
+            partner_mode = str(get_raw_setting(db, "songkick_partner_mode") or "").lower() == "true"
+            metro_area_id = get_raw_setting(db, "songkick_metro_area_id")
+            if not source.is_enabled or not songkick_key or not partner_mode or not metro_area_id:
+                continue
+            configured_adapters.append(
+                SongkickAdapter(
+                    api_key=songkick_key,
+                    partner_mode=partner_mode,
+                    metro_area_id=metro_area_id,
+                )
+            )
+            continue
+        configured_adapters.append(adapter)
+    adapters = configured_adapters
+
     if ticketmaster_key:
         from app.sources.ticketmaster import TicketmasterDiscoveryAdapter
 

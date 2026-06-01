@@ -3,6 +3,7 @@ import {
   checkVenueNow,
   createVenue,
   editVenue,
+  markVenueChecked,
   markVenueManualOnly,
   markVenueSourceBroken,
   mergeDuplicateVenues,
@@ -50,7 +51,7 @@ export default async function VenueCoveragePage() {
 
       <section className="grid gap-4 lg:grid-cols-[260px_1fr]">
         <div className="rounded-lg border border-acid/25 bg-acid/10 p-6">
-          <p className="font-display text-sm uppercase tracking-[0.24em] text-acid">Coverage score</p>
+          <p className="font-display text-sm uppercase tracking-[0.24em] text-acid">Broad coverage estimate</p>
           <div className="mt-4 font-display text-7xl font-black leading-none text-bone">
             {summary.coverage_score}%
           </div>
@@ -66,6 +67,16 @@ export default async function VenueCoveragePage() {
           <Metric label="Broken source links" value={summary.broken_source_links} />
           <Metric label="Possible duplicates" value={summary.possible_duplicates} />
           <Metric label="Not checked in 30 days" value={summary.venues_not_checked_30_days} />
+          <Metric label="API-covered venues" value={summary.api_covered_venues ?? 0} />
+          <Metric label="Feed-covered venues" value={summary.feed_covered_venues ?? 0} />
+          <Metric label="Structured-data venues" value={summary.structured_data_venues ?? 0} />
+          <Metric label="Selector-supported venues" value={summary.selector_supported_venues ?? 0} />
+          <Metric label="Blocked/unsupported venues" value={summary.blocked_unsupported_venues ?? summary.unsupported} />
+          <Metric label="Partner required" value={summary.partner_required_venues ?? 0} />
+          <Metric label="Sources needing credentials" value={summary.sources_needing_credentials ?? 0} />
+          <Metric label="Sources needing permission" value={summary.sources_needing_permission ?? 0} />
+          <Metric label="Sources failing" value={summary.sources_failing ?? 0} />
+          <Metric label="Sources working" value={summary.sources_working ?? 0} />
         </div>
       </section>
 
@@ -101,6 +112,15 @@ export default async function VenueCoveragePage() {
             <input name="address" placeholder="Address" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone md:col-span-2" />
             <input name="website_url" placeholder="Official website" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
             <input name="event_listings_url" placeholder="Events page URL" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+            <input name="official_events_url" placeholder="Official events URL" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+            <input name="feed_url" placeholder="RSS / iCal feed URL" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+            <select name="source_mode" defaultValue="manual_only" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone">
+              <option value="manual_only">Manual-only</option>
+              <option value="feed">Feed</option>
+              <option value="structured_data">Structured data</option>
+              <option value="unsupported">Unsupported</option>
+              <option value="api">API</option>
+            </select>
             <input name="ticketing_url" placeholder="Ticketing URL" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
             <input name="instagram_handle" placeholder="@instagram" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
             <select name="coverage_status" defaultValue="manual_only" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone">
@@ -109,6 +129,7 @@ export default async function VenueCoveragePage() {
               <option value="needs_review">Needs review</option>
             </select>
             <textarea name="notes" placeholder="Notes" className="min-h-20 rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone md:col-span-2" />
+            <textarea name="selector_config" placeholder='{"event_container":".event","title":".title","starts_at":".date"}' className="min-h-20 rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone md:col-span-2" />
           </div>
           <SubmitButton pendingText="Adding" className="mt-4 rounded-md bg-acid px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-ink">
             Add venue
@@ -162,6 +183,9 @@ export default async function VenueCoveragePage() {
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold uppercase tracking-[0.12em] text-bone/45">
                   {venue.event_listings_url ? <span>events page</span> : <span>no events page</span>}
+                  {venue.official_events_url ? <span>official source</span> : <span>no official source</span>}
+                  {venue.feed_url ? <span>feed</span> : <span>no feed</span>}
+                  <span>{venue.source_mode.replace("_", " ")}</span>
                   {venue.ticketing_url ? <span>ticket link</span> : <span>no ticket link</span>}
                   {venue.instagram_handle ? <span>{venue.instagram_handle}</span> : <span>no instagram</span>}
                 </div>
@@ -176,7 +200,16 @@ export default async function VenueCoveragePage() {
                   <span className="font-black text-bone/80">Last event found:</span>{" "}
                   {venue.last_event_found_at ? venue.last_event_found_at.slice(0, 10) : "None yet"}
                 </p>
+                <p className="mt-1">
+                  <span className="font-black text-bone/80">Last success:</span>{" "}
+                  {venue.last_success_at ? venue.last_success_at.slice(0, 10) : "None yet"}
+                </p>
                 <p className="mt-3 line-clamp-2">{venue.latest_check?.message ?? venue.notes ?? "No check log yet."}</p>
+                {venue.latest_check?.diagnostic_summary ? (
+                  <pre className="mt-3 max-h-32 overflow-auto rounded-md border border-bone/10 bg-night p-3 text-xs text-bone/55">
+                    {JSON.stringify(venue.latest_check.diagnostic_summary, null, 2)}
+                  </pre>
+                ) : null}
                 {venue.latest_check ? (
                   <p className="mt-2 font-black text-acid">
                     Confidence {Math.round(venue.latest_check.confidence_score * 100)}%
@@ -209,6 +242,12 @@ export default async function VenueCoveragePage() {
                     Mark manual-only
                   </SubmitButton>
                 </form>
+                <form action={markVenueChecked}>
+                  <input type="hidden" name="venueId" value={venue.id} />
+                  <SubmitButton pendingText="Marking" className="w-full rounded-md border border-clyde px-3 py-2 text-xs font-black uppercase text-clyde">
+                    Mark checked
+                  </SubmitButton>
+                </form>
                 <form action={markVenueSourceBroken}>
                   <input type="hidden" name="venueId" value={venue.id} />
                   <SubmitButton pendingText="Marking" className="w-full rounded-md border border-poster px-3 py-2 text-xs font-black uppercase text-poster">
@@ -230,9 +269,19 @@ export default async function VenueCoveragePage() {
                 <input name="address" defaultValue={venue.address ?? ""} placeholder="Address" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
                 <input name="website_url" defaultValue={venue.website_url ?? ""} placeholder="Website" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
                 <input name="event_listings_url" defaultValue={venue.event_listings_url ?? ""} placeholder="Events page" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <input name="official_events_url" defaultValue={venue.official_events_url ?? ""} placeholder="Official events URL" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <input name="feed_url" defaultValue={venue.feed_url ?? ""} placeholder="RSS / iCal feed" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <select name="source_mode" defaultValue={venue.source_mode} className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone">
+                  <option value="manual_only">Manual-only</option>
+                  <option value="feed">Feed</option>
+                  <option value="structured_data">Structured data</option>
+                  <option value="unsupported">Unsupported</option>
+                  <option value="api">API</option>
+                </select>
                 <input name="ticketing_url" defaultValue={venue.ticketing_url ?? ""} placeholder="Ticketing" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
                 <input name="instagram_handle" defaultValue={venue.instagram_handle ?? ""} placeholder="@instagram" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
                 <input name="notes" defaultValue={venue.notes ?? ""} placeholder="Notes" className="rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone" />
+                <textarea name="selector_config" defaultValue={venue.selector_config ? JSON.stringify(venue.selector_config) : ""} placeholder="Selector config JSON" className="min-h-20 rounded-md border border-bone/10 bg-night px-3 py-2 text-sm text-bone md:col-span-3" />
                 <SubmitButton pendingText="Saving" className="rounded-md border border-clyde px-3 py-2 text-sm font-black uppercase text-clyde md:col-span-3">
                   Edit venue
                 </SubmitButton>

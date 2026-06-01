@@ -10,17 +10,25 @@ from dateutil.parser import isoparse
 from app.cities.base import CityConfig
 from app.core.settings import settings
 from app.services.normalization import ensure_aware
-from app.sources.base import EventSourceAdapter, NormalizedSourceEvent, SourceFetchResult
+from app.sources.base import NormalizedSourceEvent, SourceAdapterBase, SourceFetchResult
 
 
-class ManualCsvAdapter(EventSourceAdapter):
+class ManualCsvAdapter(SourceAdapterBase):
     name = "Manual CSV import"
-    kind = "manual_csv"
+    slug = "manual-csv"
+    kind = "csv"
+    current_mode = "manual_only"
+    official_api_available = "no"
+    automation_allowed = "yes"
+    limitations = "Manual CSV import; only as complete as supplied rows."
 
     def __init__(self, csv_path: str | None = None) -> None:
         self.csv_path = csv_path or settings.manual_events_csv_path
 
-    def fetch(self, city: CityConfig, start: datetime, end: datetime) -> SourceFetchResult:
+    def is_configured(self) -> bool:
+        return bool(self.csv_path)
+
+    def fetch_events(self, city: CityConfig, start: datetime, end: datetime) -> SourceFetchResult:
         if not self.csv_path:
             return SourceFetchResult(
                 source_name=self.name,
@@ -80,6 +88,9 @@ class ManualCsvAdapter(EventSourceAdapter):
                 "has_source_id": bool(row.get("source_event_id")),
             },
         )
+
+    def normalize_event(self, item: dict) -> NormalizedSourceEvent | None:
+        return self._normalise_row({key: str(value) for key, value in item.items()})
 
 
 def _decimal_from_row(value: str | None) -> Decimal | None:

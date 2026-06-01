@@ -21,7 +21,14 @@ async function settingsFetch(path: string, init?: RequestInit) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.detail ?? `Settings request failed: ${response.status}`);
+    const detail = data.detail;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : detail?.message
+          ? `${detail.message}${detail.fix ? ` ${detail.fix}` : ""}`
+          : `Settings request failed: ${response.status}`;
+    throw new Error(message);
   }
   return data;
 }
@@ -49,6 +56,28 @@ export async function saveSettings(_state: SettingsActionState, formData: FormDa
 
 export async function testTicketmaster(): Promise<SettingsActionState> {
   return runTest("/settings/test-ticketmaster");
+}
+
+export async function testEventbrite(): Promise<SettingsActionState> {
+  return runTest("/settings/test-eventbrite");
+}
+
+export async function testBandsintown(): Promise<SettingsActionState> {
+  return runTest("/settings/test-bandsintown");
+}
+
+export async function testSongkick(): Promise<SettingsActionState> {
+  return runTest("/settings/test-songkick");
+}
+
+export async function enableEventbrite(): Promise<SettingsActionState> {
+  const result = await runTest("/settings/enable-eventbrite");
+  if (result.ok) {
+    revalidatePath("/settings");
+    revalidatePath("/admin/settings");
+    revalidatePath("/admin/source-settings");
+  }
+  return result;
 }
 
 export async function testInstagram(): Promise<SettingsActionState> {
